@@ -157,6 +157,11 @@ arena_alloc :: proc(using arena: ^Arena, $T: typeid, count: u32) -> Temp_Allocat
 arena_free_all :: proc(using arena: ^Arena)
 {
     offset = 0
+}
+
+arena_destroy :: proc(using arena: ^Arena)
+{
+    offset = 0
     size = 0
     mem_free(cpu)
     cpu = nil

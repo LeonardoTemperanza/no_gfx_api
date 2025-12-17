@@ -39,7 +39,6 @@ main :: proc()
 
     verts_local := gpu.mem_alloc_typed(u8, 1024)
     gpu.mem_free_typed(verts_local)
-    gpu.mem_free_typed(verts_local)
 
     /*
     for _ in 1..=1024
