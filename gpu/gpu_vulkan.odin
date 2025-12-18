@@ -4,41 +4,17 @@ package gpu
 import "core:slice"
 import "core:log"
 import "base:runtime"
+import vmem "core:mem/virtual"
+import "core:mem"
 
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
 
-// NOTE: "GPU Pointers" are actually fake and contain 28 (high) bits of index into gpu_allocs
-// and 36 bits of byte offset from that buffer. They should still support pointer arithmetic
-// and act like pointers.
+// NOTE: "GPU Pointers" are actually fake and contain 28 (high) bits of index (+1) into gpu_allocs
+// and 36 bits of byte offset from that buffer. They still support pointer arithmetic
+// and act like pointers. The nil pointer is reserved. See "gpu_ptr_..." procs for more info.
 
-Offset_Num_Bits :: 36
-
-@(private="file")
-gpu_ptr_pack :: #force_inline proc(buf_idx: u32, offset: u64) -> rawptr
-{
-    high := u64(buf_idx) << Offset_Num_Bits
-    low_mask := ((u64(1) << Offset_Num_Bits) - 1)
-    low := offset & low_mask
-    return cast(rawptr) cast(uintptr) (high | low)
-}
-
-@(private="file")
-gpu_ptr_unpack :: #force_inline proc(ptr: rawptr) -> (buf_idx: u32, offset: u64)
-{
-    ptr_u64 := u64(uintptr(ptr))
-    buf_idx = u32(ptr_u64 >> Offset_Num_Bits)
-    mask := ((u64(1) << Offset_Num_Bits) - 1)
-    offset = ptr_u64 & mask
-    return buf_idx, offset
-}
-
-@(private="file")
-gpu_ptr_to_device_address :: #force_inline proc(ptr: rawptr) -> rawptr
-{
-    buf_idx, offset := gpu_ptr_unpack(ptr)
-    return auto_cast (cast(uintptr) ctx.gpu_allocs[buf_idx].device_address + uintptr(offset))
-}
+PUSH_CONSTANTS_SIZE :: size_of(rawptr) * 2
 
 @(private="file")
 GPU_Alloc_Meta :: struct #all_or_none
@@ -67,6 +43,9 @@ Context :: struct
 
     // TEMPORARY
     cmd_pool: vk.CommandPool,
+
+    common_pipeline_layout: vk.PipelineLayout,
+    swapchain: Swapchain,
 }
 
 // Initialization
@@ -78,6 +57,8 @@ vk_logger: log.Logger
 
 _init :: proc(window: ^sdl.Window)
 {
+    init_scratch_arenas()
+
     // Load vulkan function pointers
     vk.load_proc_addresses_global(cast(rawptr) sdl.Vulkan_GetVkGetInstanceProcAddr())
 
@@ -214,7 +195,6 @@ _init :: proc(window: ^sdl.Window)
         vk.KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
         vk.KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
         vk.KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-        vk.EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
         vk.KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME,
         vk.KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
     }
@@ -265,7 +245,6 @@ _init :: proc(window: ^sdl.Window)
         sType = .PHYSICAL_DEVICE_FEATURES_2,
         pNext = next,
         features = {
-            geometryShader = true,  // For the tri_idx gbuffer.
         }
     }
     next = &vk.PhysicalDeviceRayTracingPositionFetchFeaturesKHR {
@@ -296,11 +275,48 @@ _init :: proc(window: ^sdl.Window)
         flags = { .TRANSIENT }
     }
     vk_check(vk.CreateCommandPool(ctx.device, &cmd_pool_ci, nil, &ctx.cmd_pool))
+
+    // Common resources
+    {
+        push_constant_ranges := []vk.PushConstantRange {
+            {
+                stageFlags = { .VERTEX, .FRAGMENT },
+                size = PUSH_CONSTANTS_SIZE,
+            }
+        }
+        layout_ci := vk.PipelineLayoutCreateInfo {
+            sType = .PIPELINE_LAYOUT_CREATE_INFO,
+            pushConstantRangeCount = u32(len(push_constant_ranges)),
+            pPushConstantRanges = raw_data(push_constant_ranges),
+            setLayoutCount = 0,
+            pSetLayouts = nil,
+        }
+        vk_check(vk.CreatePipelineLayout(ctx.device, &layout_ci, nil, &ctx.common_pipeline_layout))
+
+        win_width, win_height: i32
+        assert(sdl.GetWindowSize(window, &win_width, &win_height))
+        ctx.swapchain = create_swapchain(u32(win_width), u32(win_height))
+    }
 }
 
 _cleanup :: proc()
 {
 
+}
+
+_get_swapchain :: proc(window: ^sdl.Window) -> vk.ImageView
+{
+    return ctx.swapchain.image_views[0]
+}
+
+swapchain_acquire_next :: proc() -> vk.ImageView
+{
+    return {}
+}
+
+swapchain_present :: proc()
+{
+    
 }
 
 _mem_alloc :: proc(bytes: u64, align: u64 = 1, mem_type := Memory.Default) -> rawptr
@@ -318,7 +334,7 @@ _mem_alloc :: proc(bytes: u64, align: u64 = 1, mem_type := Memory.Default) -> ra
     buf_ci := vk.BufferCreateInfo {
         sType = .BUFFER_CREATE_INFO,
         size = cast(vk.DeviceSize) to_alloc,
-        usage = { .STORAGE_BUFFER, .TRANSFER_DST, .TRANSFER_SRC, .SHADER_DEVICE_ADDRESS, .ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR },
+        usage = { .SHADER_DEVICE_ADDRESS, .INDEX_BUFFER, .STORAGE_BUFFER, .TRANSFER_DST, .TRANSFER_SRC },
         sharingMode = .EXCLUSIVE,
     }
     buffer: vk.Buffer
@@ -402,6 +418,48 @@ _texture_size_and_align :: proc(desc: Texture_Desc) -> (size: u64, align: u64) {
 _texture_view_descriptor :: proc(texture: Texture, view_desc: Texture_View_Desc) -> [4]u64 { return {} }
 _texture_rw_view_descriptor :: proc(texture: Texture, view_desc: Texture_View_Desc) -> [4]u64 { return {} }
 
+// Shaders
+_shader_create :: proc(code: []u32, type: Shader_Type) -> Shader
+{
+    vk_stage := to_vk_shader_stage(type)
+
+    push_constant_ranges := []vk.PushConstantRange {
+        {
+            stageFlags = { .VERTEX, .FRAGMENT },
+            size = PUSH_CONSTANTS_SIZE,
+        }
+    }
+
+    shader_cis := vk.ShaderCreateInfoEXT {
+        sType = .SHADER_CREATE_INFO_EXT,
+        codeType = .SPIRV,
+        codeSize = len(code) * size_of(code[0]),
+        pCode = raw_data(code),
+        pName = "main",
+        stage = vk_stage,
+        nextStage = vk.ShaderStageFlags { .FRAGMENT } if type == .Vertex else {},
+        pushConstantRangeCount = u32(len(push_constant_ranges)),
+        pPushConstantRanges = raw_data(push_constant_ranges),
+        setLayoutCount = 0,
+        pSetLayouts = {}
+    }
+    shader: vk.ShaderEXT
+    vk_check(vk.CreateShadersEXT(ctx.device, 1, &shader_cis, nil, &shader))
+    return transmute(Shader) shader
+}
+
+@(private="file")
+to_vk_shader_stage :: proc(type: Shader_Type) -> vk.ShaderStageFlags
+{
+    switch type
+    {
+        case .Vertex: return { .VERTEX }
+        case .Fragment: return { .FRAGMENT }
+    }
+
+    return {}
+}
+
 // Semaphores
 _sem_create :: proc(init_value: u64) -> Semaphore { return {} }
 
@@ -477,19 +535,136 @@ _cmd_barrier :: proc() {}
 _cmd_signal_after :: proc() {}
 _cmd_wait_before :: proc() {}
 
-_cmd_set_shaders :: proc(cmd_buf: Command_Buffer, vert_shader: Shader, frag_shader: Shader) {}
-_cmd_set_pipeline :: proc() {}
-_cmd_set_depth_stencil_state :: proc() {}
-_cmd_set_blend_state :: proc() {}
+_cmd_set_shaders :: proc(cmd_buf: Command_Buffer, vert_shader: Shader, frag_shader: Shader)
+{
+    vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
+    vk_vert_shader := transmute(vk.ShaderEXT) vert_shader
+    vk_frag_shader := transmute(vk.ShaderEXT) frag_shader
+
+    shader_stages := []vk.ShaderStageFlags { { .VERTEX }, { .FRAGMENT } }
+    to_bind := []vk.ShaderEXT { vk_vert_shader, vk_frag_shader }
+    assert(len(shader_stages) == len(to_bind))
+    vk.CmdBindShadersEXT(vk_cmd_buf, u32(len(shader_stages)), raw_data(shader_stages), raw_data(to_bind))
+}
+
+_cmd_set_depth_state :: proc(cmd_buf: Command_Buffer, state: Depth_State)
+{
+    vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
+
+    vk.CmdSetDepthCompareOp(vk_cmd_buf, .LESS)
+    vk.CmdSetDepthTestEnable(vk_cmd_buf, false)
+    vk.CmdSetDepthWriteEnable(vk_cmd_buf, false)
+    vk.CmdSetDepthBiasEnable(vk_cmd_buf, false)
+    vk.CmdSetDepthClipEnableEXT(vk_cmd_buf, true)
+
+    vk.CmdSetStencilTestEnable(vk_cmd_buf, false)
+}
+
+_cmd_set_blend_state :: proc(cmd_buf: Command_Buffer, state: Blend_State)
+{
+    vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
+
+    b32_false := b32(false)
+    vk.CmdSetColorBlendEnableEXT(vk_cmd_buf, 0, 1, &b32_false)
+}
 
 _cmd_dispatch :: proc() {}
 _cmd_dispatch_indirect :: proc() {}
 
-_cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc) {}
-_cmd_end_render_pass :: proc(cmd_buf: Command_Buffer) {}
+_cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc)
+{
+    vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
+    color_attachment := vk.RenderingAttachmentInfo {
+        sType = .RENDERING_ATTACHMENT_INFO,
+        imageView = desc.color_attachments[0].view,
+        imageLayout = .GENERAL,
+        loadOp = .CLEAR,
+        storeOp = .STORE,
+        clearValue = {
+            color = { float32 = { 0.0, 0.0, 0.0, 0.0 } }
+        }
+    }
+    rendering_info := vk.RenderingInfo {
+        sType = .RENDERING_INFO,
+        renderArea = {
+            offset = { 0, 0 },
+            extent = { 1000, 1000 }
+        },
+        layerCount = 1,
+        colorAttachmentCount = 1,
+        pColorAttachments = &color_attachment,
+        pDepthAttachment = nil,
+    }
+    vk.CmdBeginRendering(vk_cmd_buf, &rendering_info)
+
+    sample_mask := vk.SampleMask(1)
+    vk.CmdSetSampleMaskEXT(vk_cmd_buf, { ._1 }, &sample_mask)
+    vk.CmdSetAlphaToCoverageEnableEXT(vk_cmd_buf, false)
+    vk.CmdSetPolygonModeEXT(vk_cmd_buf, .FILL)
+    vk.CmdSetCullMode(vk_cmd_buf, {})
+    vk.CmdSetFrontFace(vk_cmd_buf, .COUNTER_CLOCKWISE)
+    vk.CmdSetDepthCompareOp(vk_cmd_buf, .LESS)
+    vk.CmdSetDepthTestEnable(vk_cmd_buf, false)
+    vk.CmdSetDepthWriteEnable(vk_cmd_buf, false)
+    vk.CmdSetDepthBiasEnable(vk_cmd_buf, false)
+    vk.CmdSetDepthClipEnableEXT(vk_cmd_buf, true)
+    vk.CmdSetStencilTestEnable(vk_cmd_buf, false)
+    b32_false := b32(false)
+    vk.CmdSetColorBlendEnableEXT(vk_cmd_buf, 0, 1, &b32_false)
+    color_mask := vk.ColorComponentFlags { .R, .G, .B, .A }
+    vk.CmdSetColorWriteMaskEXT(vk_cmd_buf, 0, 1, &color_mask)
+
+    viewport := vk.Viewport {
+        x = 0, y = 0,
+        width = 1000, height = 1000,
+        minDepth = 0.0, maxDepth = 1.0,
+    }
+    vk.CmdSetViewportWithCount(vk_cmd_buf, 1, &viewport)
+    scissor := vk.Rect2D {
+        offset = {
+            x = 0, y = 0
+        },
+        extent = {
+            width = 1000, height = 1000,
+        }
+    }
+    vk.CmdSetScissorWithCount(vk_cmd_buf, 1, &scissor)
+    vk.CmdSetRasterizerDiscardEnable(vk_cmd_buf, false)
+
+    vk.CmdSetVertexInputEXT(vk_cmd_buf, 0, nil, 0, nil)
+    vk.CmdSetRasterizationSamplesEXT(vk_cmd_buf, { ._1 })
+    vk.CmdSetPrimitiveTopology(vk_cmd_buf, .TRIANGLE_LIST)
+    vk.CmdSetPrimitiveRestartEnable(vk_cmd_buf, false)
+}
+
+_cmd_end_render_pass :: proc(cmd_buf: Command_Buffer)
+{
+    vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
+    vk.CmdEndRendering(vk_cmd_buf)
+}
 
 _cmd_draw_indexed_instanced :: proc(cmd_buf: Command_Buffer, vertex_data: rawptr, pixel_data: rawptr,
-                                    indices: rawptr, index_count: u32, instance_count: u32 = 1) {}
+                                    indices: rawptr, index_count: u32, instance_count: u32 = 1)
+{
+    vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
+
+    vert_addr := gpu_ptr_to_device_address(vertex_data)
+    pixel_addr := gpu_ptr_to_device_address(pixel_data)
+    indices_buf_idx, indices_offset := gpu_ptr_unpack(indices)
+    indices_buf := ctx.gpu_allocs[indices_buf_idx].buf_handle
+
+    ptrs := []rawptr { vert_addr, pixel_addr }
+    assert(PUSH_CONSTANTS_SIZE == len(ptrs) * size_of(ptrs[0]))
+    vk.CmdPushConstants(vk_cmd_buf, ctx.common_pipeline_layout, { .VERTEX, .FRAGMENT }, 0, PUSH_CONSTANTS_SIZE, raw_data(ptrs))
+
+    // TMP
+    vk.CmdSetRasterizerDiscardEnable(vk_cmd_buf, false)
+    vk.CmdSetCullMode(vk_cmd_buf, {})
+    vk.CmdSetDepthTestEnable(vk_cmd_buf, {})
+
+    vk.CmdBindIndexBuffer(vk_cmd_buf, indices_buf, vk.DeviceSize(indices_offset), .UINT32)
+    vk.CmdDrawIndexed(vk_cmd_buf, index_count, instance_count, 0, 0, 0)
+}
 
 @(private="file")
 vk_check :: proc(result: vk.Result, location := #caller_location)
@@ -550,4 +725,186 @@ align_up :: proc(x, align: u64) -> (aligned: u64)
 {
     assert(0 == (align & (align - 1)), "must align to a power of two")
     return (x + (align - 1)) &~ (align - 1)
+}
+
+// "Fake GPU pointer" procs
+Offset_Num_Bits :: 36
+
+@(private="file")
+gpu_ptr_pack :: #force_inline proc(buf_idx: u32, offset: u64) -> rawptr
+{
+    high := u64(buf_idx + 1) << Offset_Num_Bits
+    low_mask := ((u64(1) << Offset_Num_Bits) - 1)
+    low := offset & low_mask
+    return cast(rawptr) cast(uintptr) (high | low)
+}
+
+@(private="file")
+gpu_ptr_unpack :: #force_inline proc(ptr: rawptr) -> (buf_idx: u32, offset: u64)
+{
+    ptr_u64 := u64(uintptr(ptr))
+    buf_idx = u32(ptr_u64 >> Offset_Num_Bits) - 1
+    mask := ((u64(1) << Offset_Num_Bits) - 1)
+    offset = ptr_u64 & mask
+    return buf_idx, offset
+}
+
+@(private="file")
+gpu_ptr_to_device_address :: #force_inline proc(ptr: rawptr) -> rawptr
+{
+    if ptr == nil do return nil
+    buf_idx, offset := gpu_ptr_unpack(ptr)
+    return auto_cast (cast(uintptr) ctx.gpu_allocs[buf_idx].device_address + uintptr(offset))
+}
+
+// Scratch arenas
+
+@(private="file")
+scratch_arenas: [4]vmem.Arena
+
+@(private="file")
+init_scratch_arenas :: proc()
+{
+    for &scratch in scratch_arenas
+    {
+        error := vmem.arena_init_growing(&scratch)
+        assert(error == nil)
+    }
+}
+
+@(private="file")
+@(deferred_out = release_scratch)
+acquire_scratch :: proc(used_allocators: ..mem.Allocator) -> (mem.Allocator, vmem.Arena_Temp)
+{
+    available_arena: ^vmem.Arena
+    if len(used_allocators) < 1
+    {
+        available_arena = &scratch_arenas[0]
+    }
+    else
+    {
+        for &scratch in scratch_arenas
+        {
+            for used_alloc in used_allocators
+            {
+                // NOTE: We assume that if the data points to the same exact address,
+                // it's an arena allocator and it's the same arena
+                if used_alloc.data != &scratch
+                {
+                    available_arena = &scratch
+                    break
+                }
+
+                if available_arena != nil do break
+            }
+        }
+    }
+
+    assert(available_arena != nil, "Available scratch arena not found.")
+
+    return vmem.arena_allocator(available_arena), vmem.arena_temp_begin(available_arena)
+}
+
+@(private="file")
+release_scratch :: #force_inline proc(allocator: mem.Allocator, temp: vmem.Arena_Temp)
+{
+    vmem.arena_temp_end(temp)
+}
+
+@(private="file")
+create_swapchain :: proc(width: u32, height: u32) -> Swapchain
+{
+    res: Swapchain
+
+    surface_caps: vk.SurfaceCapabilitiesKHR
+    vk_check(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.phys_device, ctx.surface, &surface_caps))
+
+    image_count := max(2, surface_caps.minImageCount)
+    if surface_caps.maxImageCount != 0 do image_count = min(image_count, surface_caps.maxImageCount)
+
+    surface_format_count: u32
+    vk_check(vk.GetPhysicalDeviceSurfaceFormatsKHR(ctx.phys_device, ctx.surface, &surface_format_count, nil))
+    surface_formats := make([]vk.SurfaceFormatKHR, surface_format_count, context.temp_allocator)
+    vk_check(vk.GetPhysicalDeviceSurfaceFormatsKHR(ctx.phys_device, ctx.surface, &surface_format_count, raw_data(surface_formats)))
+
+    surface_format := surface_formats[0]
+    for candidate in surface_formats
+    {
+        if candidate == {.B8G8R8A8_SRGB, .SRGB_NONLINEAR}
+        {
+            surface_format = candidate
+            break
+        }
+    }
+
+    present_mode_count: u32
+    vk_check(vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.phys_device, ctx.surface, &present_mode_count, nil))
+    present_modes := make([]vk.PresentModeKHR, present_mode_count, context.temp_allocator)
+    vk_check(vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.phys_device, ctx.surface, &present_mode_count, raw_data(present_modes)))
+
+    present_mode := vk.PresentModeKHR.FIFO
+    for candidate in present_modes {
+        if candidate == .MAILBOX {
+            present_mode = candidate
+            break
+        }
+    }
+
+    res.width = width
+    res.height = height
+
+    swapchain_ci := vk.SwapchainCreateInfoKHR {
+        sType = .SWAPCHAIN_CREATE_INFO_KHR,
+        surface = ctx.surface,
+        minImageCount = image_count,
+        imageFormat = surface_format.format,
+        imageColorSpace = surface_format.colorSpace,
+        imageExtent = { res.width, res.height },
+        imageArrayLayers = 1,
+        imageUsage = { .COLOR_ATTACHMENT },
+        preTransform = surface_caps.currentTransform,
+        compositeAlpha = { .OPAQUE },
+        presentMode = present_mode,
+        clipped = true,
+    }
+    vk_check(vk.CreateSwapchainKHR(ctx.device, &swapchain_ci, nil, &res.handle))
+
+    vk_check(vk.GetSwapchainImagesKHR(ctx.device, res.handle, &image_count, nil))
+    res.images = make([]vk.Image, image_count, context.allocator)
+    vk_check(vk.GetSwapchainImagesKHR(ctx.device, res.handle, &image_count, raw_data(res.images)))
+
+    res.image_views = make([]vk.ImageView, image_count, context.allocator)
+    for image, i in res.images
+    {
+        image_view_ci := vk.ImageViewCreateInfo {
+            sType = .IMAGE_VIEW_CREATE_INFO,
+            image = image,
+            viewType = .D2,
+            format = surface_format.format,
+            subresourceRange = {
+                aspectMask = { .COLOR },
+                levelCount = 1,
+                layerCount = 1,
+            },
+        }
+        vk_check(vk.CreateImageView(ctx.device, &image_view_ci, nil, &res.image_views[i]))
+    }
+
+    res.present_semaphores = make([]vk.Semaphore, image_count, context.allocator)
+
+    semaphore_ci := vk.SemaphoreCreateInfo { sType = .SEMAPHORE_CREATE_INFO }
+    for &semaphore in res.present_semaphores {
+        vk_check(vk.CreateSemaphore(ctx.device, &semaphore_ci, nil, &semaphore))
+    }
+
+    return res
+}
+
+Swapchain :: struct
+{
+    handle: vk.SwapchainKHR,
+    width, height: u32,
+    images: []vk.Image,
+    image_views: []vk.ImageView,
+    present_semaphores: []vk.Semaphore,
 }
