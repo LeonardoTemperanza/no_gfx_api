@@ -5,8 +5,6 @@ import "core:slice"
 import "core:log"
 import "base:runtime"
 
-import "core:fmt"
-
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
 
@@ -469,8 +467,6 @@ _cmd_mem_copy :: proc(cmd_buf: Command_Buffer, src, dst: rawptr, bytes: u64)
         }
     }
     vk.CmdCopyBuffer(vk_cmd_buf, src_buf, dst_buf, u32(len(copy_regions)), raw_data(copy_regions))
-
-    fmt.println("Copied", src_buffer_idx, src_offset, "into", dst_buffer_idx, dst_offset)
 }
 
 _cmd_copy_to_texture :: proc(cmd_buf: Command_Buffer, texture: Texture, src, dst: rawptr) {}
@@ -481,6 +477,7 @@ _cmd_barrier :: proc() {}
 _cmd_signal_after :: proc() {}
 _cmd_wait_before :: proc() {}
 
+_cmd_set_shaders :: proc(cmd_buf: Command_Buffer, vert_shader: Shader, frag_shader: Shader) {}
 _cmd_set_pipeline :: proc() {}
 _cmd_set_depth_stencil_state :: proc() {}
 _cmd_set_blend_state :: proc() {}
@@ -488,11 +485,11 @@ _cmd_set_blend_state :: proc() {}
 _cmd_dispatch :: proc() {}
 _cmd_dispatch_indirect :: proc() {}
 
-_cmd_begin_render_pass :: proc() {}
-_cmd_end_render_pass :: proc() {}
+_cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc) {}
+_cmd_end_render_pass :: proc(cmd_buf: Command_Buffer) {}
 
 _cmd_draw_indexed_instanced :: proc(cmd_buf: Command_Buffer, vertex_data: rawptr, pixel_data: rawptr,
-                                   indices: rawptr, index_count: u32, instance_count: u32) {}
+                                    indices: rawptr, index_count: u32, instance_count: u32 = 1) {}
 
 @(private="file")
 vk_check :: proc(result: vk.Result, location := #caller_location)

@@ -36,6 +36,9 @@ main :: proc()
     gpu.init(window)
     defer gpu.cleanup()
 
+    //vert_shader := gpu.compile_shader()
+    //frag_shader := gpu.compile_shader()
+
     Vertex :: struct { pos: [3]f32 }
 
     arena := gpu.arena_init(1024 * 1024)
@@ -53,4 +56,9 @@ main :: proc()
     upload_cmd_buf := gpu.commands_begin(queue)
     gpu.cmd_mem_copy(upload_cmd_buf, verts.gpu, verts_local, 3 * size_of(Vertex))
     gpu.queue_submit(queue, { upload_cmd_buf })
+
+    cmd_buf := gpu.commands_begin(queue)
+    gpu.cmd_begin_render_pass(cmd_buf, {})
+    gpu.cmd_end_render_pass(cmd_buf)
+    gpu.queue_submit(queue, { cmd_buf })
 }

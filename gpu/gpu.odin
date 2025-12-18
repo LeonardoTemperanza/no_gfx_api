@@ -14,6 +14,7 @@ Texture :: distinct Handle
 Command_Buffer :: distinct Handle
 Queue :: distinct Handle
 Semaphore :: distinct Handle
+Shader :: distinct Handle
 
 // Enums
 Memory :: enum { Default = 0, GPU, Readback }
@@ -21,6 +22,7 @@ Texture_Type :: enum { D2 = 0, D3, D1, Cube, D2_Array, Cube_Array }
 Texture_Format :: enum { None = 0, Rgba8_Unorm, D32_Float, Rg11B10_Float, Rgb10_A2_Unorm }
 Usage :: enum { Sampled = 0, Storage, Color_Attachment, Depth_Stencil_Attachment }
 Usage_Flags :: bit_set[Usage; u32]
+Shader_Type :: enum { Vertex = 0, Fragment }
 
 // Constants
 All_Mips: u8 : max(u8)
@@ -47,6 +49,21 @@ Texture_View_Desc :: struct
     layer_count: u16,  // 0 = All_Layers
 }
 
+Attachment :: struct
+{
+    test: u32
+}
+
+Render_Pass_Desc :: struct
+{
+    //renderArea:           Rect2D,
+    layer_count:          u32,
+    view_mask:            u32,
+    color_attachments:    []Attachment,
+    depth_attachment:     Maybe(Attachment),
+    stencil_attachment:   Maybe(Attachment),
+}
+
 // Initialization. This is simpler than it would actually be, for brevity.
 init: proc(window: ^sdl.Window) : _init
 cleanup: proc() : _cleanup
@@ -57,35 +74,39 @@ mem_free: proc(ptr: rawptr, loc := #caller_location) : _mem_free
 host_to_device_ptr: proc(ptr: rawptr) -> rawptr : _host_to_device_ptr  // Only supports base allocation pointers, like mem_free!
 
 // Textures
-texture_size_and_align: proc(desc: Texture_Desc) -> (size: u64, align: u64) : _texture_size_and_align
-texture_view_descriptor: proc(texture: Texture, view_desc: Texture_View_Desc) -> [4]u64 : _texture_view_descriptor
-texture_rw_view_descriptor: proc(texture: Texture, view_desc: Texture_View_Desc) -> [4]u64 : _texture_rw_view_descriptor
+//texture_size_and_align: proc(desc: Texture_Desc) -> (size: u64, align: u64) : _texture_size_and_align
+//texture_view_descriptor: proc(texture: Texture, view_desc: Texture_View_Desc) -> [4]u64 : _texture_view_descriptor
+//texture_rw_view_descriptor: proc(texture: Texture, view_desc: Texture_View_Desc) -> [4]u64 : _texture_rw_view_descriptor
+
+// Shaders
+shader_create :: proc(code: []byte, type: Shader_Type)
 
 // Semaphores
-sem_create: proc(init_value: u64) -> Semaphore : _sem_create
+// sem_create: proc(init_value: u64) -> Semaphore : _sem_create
 
 // Commands
 cmd_mem_copy: proc(cmd_buf: Command_Buffer, src, dst: rawptr, bytes: u64) : _cmd_mem_copy
-cmd_copy_to_texture: proc(cmd_buf: Command_Buffer, texture: Texture, src, dst: rawptr) : _cmd_copy_to_texture
+//cmd_copy_to_texture: proc(cmd_buf: Command_Buffer, texture: Texture, src, dst: rawptr) : _cmd_copy_to_texture
 
-cmd_set_active_texture_heap_ptr: proc(cmd_buf: Command_Buffer, ptr: rawptr) : _cmd_set_active_texture_heap_ptr
+//cmd_set_active_texture_heap_ptr: proc(cmd_buf: Command_Buffer, ptr: rawptr) : _cmd_set_active_texture_heap_ptr
 
-cmd_barrier: proc() : _cmd_barrier
-cmd_signal_after: proc() : _cmd_signal_after
-cmd_wait_before: proc() : _cmd_wait_before
+//cmd_barrier: proc() : _cmd_barrier
+//cmd_signal_after: proc() : _cmd_signal_after
+//cmd_wait_before: proc() : _cmd_wait_before
 
-cmd_set_pipeline: proc() : _cmd_set_pipeline
-cmd_set_depth_stencil_state: proc() : _cmd_set_depth_stencil_state
-cmd_set_blend_state: proc() : _cmd_set_blend_state
+cmd_set_shaders: proc(cmd_buf: Command_Buffer, vert_shader: Shader, frag_shader: Shader) : _cmd_set_shaders
+//cmd_set_depth_stencil_state: proc() : _cmd_set_depth_stencil_state
+//cmd_set_blend_state: proc() : _cmd_set_blend_state
 
-cmd_dispatch: proc() : _cmd_dispatch
-cmd_dispatch_indirect: proc() : _cmd_dispatch_indirect
+//cmd_dispatch: proc() : _cmd_dispatch
+//cmd_dispatch_indirect: proc() : _cmd_dispatch_indirect
 
-cmd_begin_render_pass: proc() : _cmd_begin_render_pass
-cmd_end_render_pass: proc() : _cmd_end_render_pass
+cmd_begin_render_pass: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc) : _cmd_begin_render_pass
+cmd_end_render_pass: proc(cmd_buf: Command_Buffer) : _cmd_end_render_pass
 
+// Indices can be nil
 cmd_draw_indexed_instanced: proc(cmd_buf: Command_Buffer, vertex_data: rawptr, pixel_data: rawptr,
-                                 indices: rawptr, index_count: u32, instance_count: u32) : _cmd_draw_indexed_instanced
+                                 indices: rawptr, index_count: u32, instance_count: u32 = 1) : _cmd_draw_indexed_instanced
 
 // Userland Utilities
 
