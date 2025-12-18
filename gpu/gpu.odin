@@ -5,13 +5,14 @@ import "core:slice"
 
 import sdl "vendor:sdl3"
 
-// This API follows ZII (Zero Is Initialization) principles. Initializing to 0
+// This API follows the ZII (Zero Is Initialization) principle. Initializing to 0
 // will yield predictable and reasonable behavior in general.
 
 // Handles
 Handle :: rawptr
 Texture :: distinct Handle
 Command_Buffer :: distinct Handle
+Queue :: distinct Handle
 Semaphore :: distinct Handle
 
 // Enums
@@ -53,7 +54,7 @@ cleanup: proc() : _cleanup
 // Memory
 mem_alloc: proc(bytes: u64, align: u64 = 1, mem_type := Memory.Default) -> rawptr : _mem_alloc
 mem_free: proc(ptr: rawptr, loc := #caller_location) : _mem_free
-host_to_device_ptr: proc(ptr: rawptr) -> rawptr : _host_to_device_ptr
+host_to_device_ptr: proc(ptr: rawptr) -> rawptr : _host_to_device_ptr  // Only supports base allocation pointers, like mem_free!
 
 // Textures
 texture_size_and_align: proc(desc: Texture_Desc) -> (size: u64, align: u64) : _texture_size_and_align
@@ -64,7 +65,7 @@ texture_rw_view_descriptor: proc(texture: Texture, view_desc: Texture_View_Desc)
 sem_create: proc(init_value: u64) -> Semaphore : _sem_create
 
 // Commands
-cmd_mem_copy: proc(cmd_buf: Command_Buffer, src, dst: rawptr) : _cmd_mem_copy
+cmd_mem_copy: proc(cmd_buf: Command_Buffer, src, dst: rawptr, bytes: u64) : _cmd_mem_copy
 cmd_copy_to_texture: proc(cmd_buf: Command_Buffer, texture: Texture, src, dst: rawptr) : _cmd_copy_to_texture
 
 cmd_set_active_texture_heap_ptr: proc(cmd_buf: Command_Buffer, ptr: rawptr) : _cmd_set_active_texture_heap_ptr
@@ -94,6 +95,12 @@ mem_alloc_typed :: proc($T: typeid, count: u64) -> []T
     return slice.from_ptr(cast(^T) ptr, int(count))
 }
 
+mem_alloc_typed_gpu :: proc($T: typeid, count: u64) -> rawptr
+{
+    ptr := mem_alloc(size_of(T) * count, align_of(T), mem_type = .GPU)
+    return ptr
+}
+
 // Avoid -vet warnings about unused "slice" package
 @(private="file")
 _fictitious :: proc() { mem_alloc_typed(u32, 0) }
@@ -111,46 +118,38 @@ Arena :: struct
     size: u64,
 }
 
-Temp_Allocation :: struct($T: typeid)
+Allocation :: struct($T: typeid)
 {
-    cpu: ^T,
-    gpu: ^T,
+    cpu: []T,
+    gpu: rawptr,
 }
 
-arena_create :: proc(using arena: ^Arena, storage: u64) -> Arena
+arena_init :: proc(storage: u64) -> Arena
 {
     res: Arena
     res.size = storage
     res.cpu = mem_alloc(storage)
-    res.gpu = host_to_device_ptr(cpu)
+    res.gpu = host_to_device_ptr(res.cpu)
     return res
 }
 
-arena_alloc_untyped :: proc(using arena: ^Arena, bytes: u64, align: u64 = 16) -> Temp_Allocation(u8)
+arena_alloc_untyped :: proc(using arena: ^Arena, bytes: u64, align: u64 = 16) -> (alloc_cpu: rawptr, alloc_gpu: rawptr)
 {
     offset = u64(align_up(offset, align))
     if offset + bytes > size do offset = 0  // No overflow detection
 
-    alloc := Temp_Allocation(u8) {
-        cpu = auto_cast(uintptr(cpu) + uintptr(offset)),
-        gpu = auto_cast(uintptr(gpu) + uintptr(offset))
-    }
+    alloc_cpu = auto_cast(uintptr(cpu) + uintptr(offset))
+    alloc_gpu = auto_cast(uintptr(gpu) + uintptr(offset))
     offset += bytes
-
-    return alloc
-
-    align_up :: proc(x, align: u64) -> (aligned: u64) {
-        assert(0 == (align & (align - 1)), "must align to a power of two")
-        return (x + (align - 1)) &~ (align - 1)
-    }
+    return
 }
 
-arena_alloc :: proc(using arena: ^Arena, $T: typeid, count: u32) -> Temp_Allocation(T)
+arena_alloc :: proc(using arena: ^Arena, $T: typeid, count: u64) -> Allocation(T)
 {
-    alloc := arena_alloc_untyped(arena, size_of(T) * count, align_of(T))
+    alloc_cpu, alloc_gpu := arena_alloc_untyped(arena, size_of(T) * count, align_of(T))
     return {
-        cpu = auto_cast alloc.cpu,
-        gpu = auto_cast alloc.gpu
+        cpu = slice.from_ptr(cast(^T) alloc_cpu, int(count)),
+        gpu = alloc_gpu
     }
 }
 
@@ -166,4 +165,11 @@ arena_destroy :: proc(using arena: ^Arena)
     mem_free(cpu)
     cpu = nil
     gpu = nil
+}
+
+@(private="file")
+align_up :: proc(x, align: u64) -> (aligned: u64)
+{
+    assert(0 == (align & (align - 1)), "must align to a power of two")
+    return (x + (align - 1)) &~ (align - 1)
 }

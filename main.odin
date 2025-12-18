@@ -21,8 +21,6 @@ main :: proc()
     defer log.destroy_console_logger(console_logger)
     context.logger = console_logger
 
-    //ts_freq := sdl.GetPerformanceFrequency()
-
     window_flags :: sdl.WindowFlags {
         .HIGH_PIXEL_DENSITY,
         .VULKAN,
@@ -36,30 +34,23 @@ main :: proc()
     ensure(window != nil)
 
     gpu.init(window)
+    defer gpu.cleanup()
 
-    verts_local := gpu.mem_alloc_typed(u8, 1024)
-    gpu.mem_free_typed(verts_local)
+    Vertex :: struct { pos: [3]f32 }
 
-    /*
-    for _ in 1..=1024
-    {
-        verts_local := gpu.mem_alloc_typed(u8, 1024)
-        fmt.println(verts_local[0])
-        gpu.mem_free_typed(verts_local)
-    }
-    for _ in 1..=1024
-    {
-        verts_local := gpu.mem_alloc(1024, mem_type = .GPU)
-        //fmt.println((cast(^u32) verts_local)^)
-        gpu.mem_free(verts_local)
-    }
-    for _ in 1..=1024
-    {
-        verts_local := gpu.mem_alloc(1024, mem_type = .Readback)
-        fmt.println((cast(^u32) verts_local)^)
-        gpu.mem_free(verts_local)
-    }
-    */
+    arena := gpu.arena_init(1024 * 1024)
+    defer gpu.arena_destroy(&arena)
 
-    // gpu.cmd
+    verts := gpu.arena_alloc(&arena, Vertex, 3)
+    verts.cpu[0].pos = { -0.5, -0.5, 0.0 }
+    verts.cpu[1].pos = {  0.0,  0.5, 0.0 }
+    verts.cpu[2].pos = {  0.5, -0.5, 0.0 }
+
+    verts_local := gpu.mem_alloc_typed_gpu(Vertex, 3)
+
+    queue := gpu.get_queue()
+
+    upload_cmd_buf := gpu.commands_begin(queue)
+    gpu.cmd_mem_copy(upload_cmd_buf, verts.gpu, verts_local, 3 * size_of(Vertex))
+    gpu.queue_submit(queue, { upload_cmd_buf })
 }

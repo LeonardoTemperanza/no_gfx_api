@@ -5,14 +5,50 @@ import "core:slice"
 import "core:log"
 import "base:runtime"
 
+import "core:fmt"
+
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
 
+// NOTE: "GPU Pointers" are actually fake and contain 28 (high) bits of index into gpu_allocs
+// and 36 bits of byte offset from that buffer. They should still support pointer arithmetic
+// and act like pointers.
+
+Offset_Num_Bits :: 36
+
 @(private="file")
-Alloc_Meta :: struct
+gpu_ptr_pack :: #force_inline proc(buf_idx: u32, offset: u64) -> rawptr
+{
+    high := u64(buf_idx) << Offset_Num_Bits
+    low_mask := ((u64(1) << Offset_Num_Bits) - 1)
+    low := offset & low_mask
+    return cast(rawptr) cast(uintptr) (high | low)
+}
+
+@(private="file")
+gpu_ptr_unpack :: #force_inline proc(ptr: rawptr) -> (buf_idx: u32, offset: u64)
+{
+    ptr_u64 := u64(uintptr(ptr))
+    buf_idx = u32(ptr_u64 >> Offset_Num_Bits)
+    mask := ((u64(1) << Offset_Num_Bits) - 1)
+    offset = ptr_u64 & mask
+    return buf_idx, offset
+}
+
+@(private="file")
+gpu_ptr_to_device_address :: #force_inline proc(ptr: rawptr) -> rawptr
+{
+    buf_idx, offset := gpu_ptr_unpack(ptr)
+    return auto_cast (cast(uintptr) ctx.gpu_allocs[buf_idx].device_address + uintptr(offset))
+}
+
+@(private="file")
+GPU_Alloc_Meta :: struct #all_or_none
 {
     mem_handle: vk.DeviceMemory,
     buf_handle: vk.Buffer,
+    device_address: vk.DeviceAddress,
+    align: u32,
 }
 
 @(private="file")
@@ -22,12 +58,17 @@ Context :: struct
     debug_messenger: vk.DebugUtilsMessengerEXT,
     surface: vk.SurfaceKHR,
 
-    alloc_meta: map[rawptr]Alloc_Meta,
+    gpu_allocs: [dynamic]GPU_Alloc_Meta,
+    cpu_ptr_to_alloc: map[rawptr]u32,  // Each entry has an index to its corresponding GPU allocation
+    gpu_ptr_to_alloc: map[rawptr]u32,  // From base GPU allocation pointer to metadata
 
     phys_device: vk.PhysicalDevice,
     device: vk.Device,
     queue: vk.Queue,
     queue_family_idx: u32,
+
+    // TEMPORARY
+    cmd_pool: vk.CommandPool,
 }
 
 // Initialization
@@ -36,25 +77,6 @@ Context :: struct
 ctx: Context
 @(private="file")
 vk_logger: log.Logger
-
-@(private="file")
-vk_debug_callback :: proc "system" (severity: vk.DebugUtilsMessageSeverityFlagsEXT,
-                                    types: vk.DebugUtilsMessageTypeFlagsEXT,
-                                    callback_data: ^vk.DebugUtilsMessengerCallbackDataEXT,
-                                    user_data: rawptr) -> b32
-{
-    context = runtime.default_context()
-    context.logger = vk_logger
-
-    level: log.Level
-    if .ERROR in severity        do level = .Error
-    else if .WARNING in severity do level = .Warning
-    else if .INFO in severity    do level = .Info
-    else                         do level = .Debug
-    log.log(level, callback_data.pMessage)
-
-    return false
-}
 
 _init :: proc(window: ^sdl.Window)
 {
@@ -268,6 +290,14 @@ _init :: proc(window: ^sdl.Window)
     if vk.BeginCommandBuffer == nil do fatal_error("Failed to load Vulkan device API")
 
     vk.GetDeviceQueue(ctx.device, queue_family_idx, 0, &ctx.queue)
+
+    // TEMPORARY
+    cmd_pool_ci := vk.CommandPoolCreateInfo {
+        sType = .COMMAND_POOL_CREATE_INFO,
+        queueFamilyIndex = ctx.queue_family_idx,
+        flags = { .TRANSIENT }
+    }
+    vk_check(vk.CreateCommandPool(ctx.device, &cmd_pool_ci, nil, &ctx.cmd_pool))
 }
 
 _cleanup :: proc()
@@ -317,46 +347,57 @@ _mem_alloc :: proc(bytes: u64, align: u64 = 1, mem_type := Memory.Default) -> ra
 
     vk_check(vk.BindBufferMemory(ctx.device, buffer, mem, 0))
 
-    ptr: rawptr
+    info := vk.BufferDeviceAddressInfo {
+        sType = .BUFFER_DEVICE_ADDRESS_INFO,
+        buffer = buffer
+    }
+    addr := align_up(u64(vk.GetBufferDeviceAddress(ctx.device, &info)), align)
+    addr_ptr := cast(rawptr) cast(uintptr) addr
+
+    append(&ctx.gpu_allocs, GPU_Alloc_Meta {
+        mem_handle = mem,
+        buf_handle = buffer,
+        device_address = cast(vk.DeviceAddress)addr,
+        align = u32(align),
+    })
+    gpu_alloc_idx := u32(len(ctx.gpu_allocs)) - 1
+    ctx.gpu_ptr_to_alloc[addr_ptr] = gpu_alloc_idx
+
     if mem_type != .GPU
     {
+        ptr: rawptr
         vk_check(vk.MapMemory(ctx.device, mem, 0, vk.DeviceSize(to_alloc), {}, &ptr))
-    }
-    else
-    {
-        info := vk.BufferDeviceAddressInfo {
-            sType = .BUFFER_DEVICE_ADDRESS_INFO,
-            buffer = buffer
-        }
-        addr := vk.GetBufferDeviceAddress(ctx.device, &info)
-        ptr = cast(rawptr) cast(uintptr) align_up(u64(addr), align)
+        ctx.cpu_ptr_to_alloc[ptr] = gpu_alloc_idx
+        return ptr
     }
 
-    ctx.alloc_meta[ptr] = { mem, buffer }
-    return ptr
-
-    align_up :: proc(x, align: u64) -> (aligned: u64) {
-        assert(0 == (align & (align - 1)), "must align to a power of two")
-        return (x + (align - 1)) &~ (align - 1)
-    }
+    return gpu_ptr_pack(gpu_alloc_idx, 0)
 }
 
 _mem_free :: proc(ptr: rawptr, loc := #caller_location)
 {
-    meta, found := ctx.alloc_meta[ptr]
-    if !found
+    _, cpu_found := ctx.cpu_ptr_to_alloc[ptr]
+    _, gpu_found := ctx.gpu_ptr_to_alloc[ptr]
+    if !cpu_found && !gpu_found
     {
-        log.error("Attempting to free a pointer which hasn't been allocated (or has already been freed).", location = loc)
+        log.error("Attempting to free a pointer which is not allocated.", location = loc)
         return
     }
 
-    defer delete_key(&ctx.alloc_meta, ptr)
-
-    vk.FreeMemory(ctx.device, meta.mem_handle, nil)
-    vk.DestroyBuffer(ctx.device, meta.buf_handle, nil)
+    // TODO: Free stuff
 }
 
-_host_to_device_ptr :: proc(ptr: rawptr) -> rawptr { return {} }
+_host_to_device_ptr :: proc(ptr: rawptr) -> rawptr
+{
+    meta_idx, found := ctx.cpu_ptr_to_alloc[ptr]
+    if !found
+    {
+        log.error("Attempting to get the device pointer of a host pointer which is not allocated. Note: The pointer passed to this function must be a base allocation pointer.")
+        return {}
+    }
+
+    return gpu_ptr_pack(meta_idx, 0)
+}
 
 // Textures
 _texture_size_and_align :: proc(desc: Texture_Desc) -> (size: u64, align: u64) { return {}, {} }
@@ -367,7 +408,71 @@ _texture_rw_view_descriptor :: proc(texture: Texture, view_desc: Texture_View_De
 _sem_create :: proc(init_value: u64) -> Semaphore { return {} }
 
 // Commands
-_cmd_mem_copy :: proc(cmd_buf: Command_Buffer, src, dst: rawptr) {}
+get_queue :: proc() -> Queue
+{
+    return cast(Queue) ctx.queue
+}
+
+commands_begin :: proc(queue: Queue) -> Command_Buffer
+{
+    cmd_buf_ai := vk.CommandBufferAllocateInfo {
+        sType = .COMMAND_BUFFER_ALLOCATE_INFO,
+        commandPool = ctx.cmd_pool,
+        level = .PRIMARY,
+        commandBufferCount = 1,
+    }
+    cmd_buf: vk.CommandBuffer
+    vk_check(vk.AllocateCommandBuffers(ctx.device, &cmd_buf_ai, &cmd_buf))
+
+    cmd_buf_bi := vk.CommandBufferBeginInfo {
+        sType = .COMMAND_BUFFER_BEGIN_INFO,
+        flags = { .ONE_TIME_SUBMIT },
+    }
+    vk_check(vk.BeginCommandBuffer(cmd_buf, &cmd_buf_bi))
+
+    return cast(Command_Buffer) cmd_buf
+}
+
+queue_submit :: proc(queue: Queue, cmd_bufs: []Command_Buffer)
+{
+    vk_queue := cast(vk.Queue) queue
+
+    for cmd_buf in cmd_bufs
+    {
+        vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
+        vk_check(vk.EndCommandBuffer(vk_cmd_buf))
+    }
+
+    to_submit := transmute([]vk.CommandBuffer) cmd_bufs
+    submit_info := vk.SubmitInfo {
+        sType              = .SUBMIT_INFO,
+        commandBufferCount = u32(len(to_submit)),
+        pCommandBuffers    = raw_data(to_submit),
+    }
+    vk_check(vk.QueueSubmit(vk_queue, 1, &submit_info, {}))
+}
+
+_cmd_mem_copy :: proc(cmd_buf: Command_Buffer, src, dst: rawptr, bytes: u64)
+{
+    vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
+
+    src_buffer_idx, src_offset := gpu_ptr_unpack(src)
+    dst_buffer_idx, dst_offset := gpu_ptr_unpack(dst)
+    src_buf := ctx.gpu_allocs[src_buffer_idx].buf_handle
+    dst_buf := ctx.gpu_allocs[dst_buffer_idx].buf_handle
+
+    copy_regions := []vk.BufferCopy {
+        {
+            srcOffset = vk.DeviceSize(src_offset),
+            dstOffset = vk.DeviceSize(dst_offset),
+            size = vk.DeviceSize(bytes),
+        }
+    }
+    vk.CmdCopyBuffer(vk_cmd_buf, src_buf, dst_buf, u32(len(copy_regions)), raw_data(copy_regions))
+
+    fmt.println("Copied", src_buffer_idx, src_offset, "into", dst_buffer_idx, dst_offset)
+}
+
 _cmd_copy_to_texture :: proc(cmd_buf: Command_Buffer, texture: Texture, src, dst: rawptr) {}
 
 _cmd_set_active_texture_heap_ptr :: proc(cmd_buf: Command_Buffer, ptr: rawptr) {}
@@ -398,6 +503,25 @@ vk_check :: proc(result: vk.Result, location := #caller_location)
 }
 
 @(private="file")
+vk_debug_callback :: proc "system" (severity: vk.DebugUtilsMessageSeverityFlagsEXT,
+                                    types: vk.DebugUtilsMessageTypeFlagsEXT,
+                                    callback_data: ^vk.DebugUtilsMessengerCallbackDataEXT,
+                                    user_data: rawptr) -> b32
+{
+    context = runtime.default_context()
+    context.logger = vk_logger
+
+    level: log.Level
+    if .ERROR in severity        do level = .Error
+    else if .WARNING in severity do level = .Warning
+    else if .INFO in severity    do level = .Info
+    else                         do level = .Debug
+    log.log(level, callback_data.pMessage)
+
+    return false
+}
+
+@(private="file")
 fatal_error :: proc(fmt: string, args: ..any, location := #caller_location)
 {
     when ODIN_DEBUG {
@@ -422,4 +546,11 @@ find_mem_type :: proc(phys_device: vk.PhysicalDevice, type_filter: u32, properti
     }
 
     panic("Vulkan Error: Could not find suitable memory type!")
+}
+
+@(private="file")
+align_up :: proc(x, align: u64) -> (aligned: u64)
+{
+    assert(0 == (align & (align - 1)), "must align to a power of two")
+    return (x + (align - 1)) &~ (align - 1)
 }
