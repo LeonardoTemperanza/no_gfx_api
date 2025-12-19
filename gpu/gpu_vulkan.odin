@@ -302,6 +302,22 @@ _init :: proc(window: ^sdl.Window)
         assert(sdl.GetWindowSize(window, &win_width, &win_height))
         ctx.swapchain = create_swapchain(u32(win_width), u32(win_height))
     }
+
+    // Tree init
+    rbt.init_cmp(&ctx.alloc_tree, proc(range_a: Alloc_Range, range_b: Alloc_Range) -> rbt.Ordering {
+        // NOTE: When searching, Alloc_Range { ptr, 0 } is used.
+        diff_ba := int(range_b.ptr) - int(range_a.ptr)
+        diff_ab := int(range_a.ptr) - int(range_b.ptr)
+        if diff_ba >= 0 && diff_ba < int(range_a.size) {
+            return .Equal
+        } else if diff_ab >= 0 && diff_ab < int(range_b.size) {
+            return .Equal
+        } else if range_a.ptr < range_b.ptr {
+            return .Less
+        } else {
+            return .Greater
+        }
+    })
 }
 
 _cleanup :: proc()
@@ -370,17 +386,18 @@ _mem_alloc :: proc(bytes: u64, align: u64 = 1, mem_type := Memory.Default) -> ra
         sType = .BUFFER_DEVICE_ADDRESS_INFO,
         buffer = buffer
     }
-    addr := align_up(u64(vk.GetBufferDeviceAddress(ctx.device, &info)), align)
+    addr := vk.GetBufferDeviceAddress(ctx.device, &info)
     addr_ptr := cast(rawptr) cast(uintptr) addr
 
     append(&ctx.gpu_allocs, GPU_Alloc_Meta {
         mem_handle = mem,
         buf_handle = buffer,
-        device_address = cast(vk.DeviceAddress)addr,
+        device_address = addr,
         align = u32(align),
     })
     gpu_alloc_idx := u32(len(ctx.gpu_allocs)) - 1
     ctx.gpu_ptr_to_alloc[addr_ptr] = gpu_alloc_idx
+    rbt.find_or_insert(&ctx.alloc_tree, Alloc_Range { u64(addr), u32(bytes) }, gpu_alloc_idx)
 
     if mem_type != .GPU
     {
@@ -895,7 +912,8 @@ Swapchain :: struct
 @(private="file")
 search_alloc_from_gpu_ptr :: proc(ptr: rawptr) -> (res: u32, ok: bool)
 {
-    return {}, false
+    alloc_idx, found := rbt.find_value(&ctx.alloc_tree, Alloc_Range { u64(uintptr(ptr)), 0 })
+    return alloc_idx, found
 }
 
 @(private="file")
