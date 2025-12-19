@@ -49,8 +49,12 @@ Context :: struct
     // TEMPORARY
     cmd_pool: vk.CommandPool,
 
+    // Common resources
     common_pipeline_layout: vk.PipelineLayout,
+
+    // Swapchain
     swapchain: Swapchain,
+    swapchain_image_idx: u32,
 }
 
 // Initialization
@@ -250,6 +254,7 @@ _init :: proc(window: ^sdl.Window)
         sType = .PHYSICAL_DEVICE_FEATURES_2,
         pNext = next,
         features = {
+            shaderInt64 = true,
         }
     }
     next = &vk.PhysicalDeviceRayTracingPositionFetchFeaturesKHR {
@@ -322,10 +327,10 @@ _init :: proc(window: ^sdl.Window)
 
 _cleanup :: proc()
 {
-
+    vk.DestroyDevice(ctx.device, nil)
 }
 
-_get_swapchain :: proc(window: ^sdl.Window) -> vk.ImageView
+_swapchain_acquire_next :: proc() -> vk.ImageView
 {
     fence_ci := vk.FenceCreateInfo {
         sType = .FENCE_CREATE_INFO,
@@ -335,29 +340,22 @@ _get_swapchain :: proc(window: ^sdl.Window) -> vk.ImageView
     vk_check(vk.CreateFence(ctx.device, &fence_ci, nil, &fence))
     defer vk.DestroyFence(ctx.device, fence, nil)
 
-    image_idx: u32
-    vk_check(vk.AcquireNextImageKHR(ctx.device, ctx.swapchain.handle, max(u64), {}, fence, &image_idx))
+    vk_check(vk.AcquireNextImageKHR(ctx.device, ctx.swapchain.handle, max(u64), {}, fence, &ctx.swapchain_image_idx))
 
     vk_check(vk.WaitForFences(ctx.device, 1, &fence, true, max(u64)))
 
-    return ctx.swapchain.image_views[image_idx]
-}
-
-swapchain_wait_next :: proc() -> vk.ImageView
-{
-    return {}
+    return ctx.swapchain.image_views[ctx.swapchain_image_idx]
 }
 
 _swapchain_present :: proc()
 {
-    image_idx := u32(0)
     vk_check(vk.QueuePresentKHR(ctx.queue, &{
         sType = .PRESENT_INFO_KHR,
         //waitSemaphoreCount = 1,
         //pWaitSemaphores = &present_semaphore,
         swapchainCount = 1,
         pSwapchains = &ctx.swapchain.handle,
-        pImageIndices = &image_idx,
+        pImageIndices = &ctx.swapchain_image_idx,
     }))
 }
 
@@ -495,12 +493,28 @@ _shader_create :: proc(code: []u32, type: Shader_Type) -> Shader
 }
 
 @(private="file")
-to_vk_shader_stage :: proc(type: Shader_Type) -> vk.ShaderStageFlags
+to_vk_shader_stage :: #force_inline proc(type: Shader_Type) -> vk.ShaderStageFlags
 {
     switch type
     {
         case .Vertex: return { .VERTEX }
         case .Fragment: return { .FRAGMENT }
+    }
+
+    return {}
+}
+
+@(private="file")
+to_vk_stage :: #force_inline proc(stage: Stage) -> vk.PipelineStageFlags
+{
+    switch stage
+    {
+        case .Transfer: return { .TRANSFER }
+        case .Compute: return { .COMPUTE_SHADER }
+        case .Raster_Color_Out: return { .COLOR_ATTACHMENT_OUTPUT }
+        case .Fragment_Shader: return { .FRAGMENT_SHADER }
+        case .Vertex_Shader: return { .VERTEX_SHADER }
+        case .All: return { .ALL_COMMANDS }
     }
 
     return {}
@@ -580,7 +594,21 @@ _cmd_copy_to_texture :: proc(cmd_buf: Command_Buffer, texture: Texture, src, dst
 
 _cmd_set_active_texture_heap_ptr :: proc(cmd_buf: Command_Buffer, ptr: rawptr) {}
 
-_cmd_barrier :: proc() {}
+_cmd_barrier :: proc(cmd_buf: Command_Buffer, before: Stage, after: Stage, hazards: Hazard_Flags = {})
+{
+    vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
+
+    vk_before := to_vk_stage(before)
+    vk_after  := to_vk_stage(after)
+
+    barrier := vk.MemoryBarrier {
+        sType = .MEMORY_BARRIER,
+        srcAccessMask = { .MEMORY_WRITE },
+        dstAccessMask = { .MEMORY_READ }
+    }
+    vk.CmdPipelineBarrier(vk_cmd_buf, vk_before, vk_after, {}, 1, &barrier, 0, nil, 0, nil)
+}
+
 _cmd_signal_after :: proc() {}
 _cmd_wait_before :: proc() {}
 
@@ -623,6 +651,9 @@ _cmd_dispatch_indirect :: proc() {}
 _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc)
 {
     vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
+
+    clear_color := desc.color_attachments[0].clear_color
+
     color_attachment := vk.RenderingAttachmentInfo {
         sType = .RENDERING_ATTACHMENT_INFO,
         imageView = desc.color_attachments[0].view,
@@ -630,14 +661,14 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc)
         loadOp = .CLEAR,
         storeOp = .STORE,
         clearValue = {
-            color = { float32 = { 0.1, 0.1, 0.1, 0.0 } }
+            color = { float32 = { clear_color.r, clear_color.g, clear_color.b, clear_color.a } }
         }
     }
     rendering_info := vk.RenderingInfo {
         sType = .RENDERING_INFO,
         renderArea = {
             offset = { 0, 0 },
-            extent = { 4000, 2000 }
+            extent = { 1900, 1900 }
         },
         layerCount = 1,
         colorAttachmentCount = 1,
@@ -665,7 +696,7 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc)
 
     viewport := vk.Viewport {
         x = 0, y = 0,
-        width = 4000, height = 2000,
+        width = 1900, height = 1900,
         minDepth = 0.0, maxDepth = 1.0,
     }
     vk.CmdSetViewportWithCount(vk_cmd_buf, 1, &viewport)
@@ -674,7 +705,7 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc)
             x = 0, y = 0
         },
         extent = {
-            width = 3000, height = 2000,
+            width = 1900, height = 1900,
         }
     }
     vk.CmdSetScissorWithCount(vk_cmd_buf, 1, &scissor)
@@ -692,7 +723,7 @@ _cmd_end_render_pass :: proc(cmd_buf: Command_Buffer)
     vk.CmdEndRendering(vk_cmd_buf)
 }
 
-_cmd_draw_indexed_instanced :: proc(cmd_buf: Command_Buffer, vertex_data: rawptr, pixel_data: rawptr,
+_cmd_draw_indexed_instanced :: proc(cmd_buf: Command_Buffer, vertex_data: rawptr, fragment_data: rawptr,
                                     indices: rawptr, index_count: u32, instance_count: u32 = 1)
 {
     vk_cmd_buf := cast(vk.CommandBuffer) cmd_buf
@@ -704,7 +735,7 @@ _cmd_draw_indexed_instanced :: proc(cmd_buf: Command_Buffer, vertex_data: rawptr
         return
     }
 
-    ptrs := []rawptr { vertex_data, pixel_data }
+    ptrs := []rawptr { vertex_data, fragment_data }
     assert(PUSH_CONSTANTS_SIZE == len(ptrs) * size_of(ptrs[0]))
     vk.CmdPushConstants(vk_cmd_buf, ctx.common_pipeline_layout, { .VERTEX, .FRAGMENT }, 0, PUSH_CONSTANTS_SIZE, raw_data(ptrs))
 

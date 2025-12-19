@@ -1,12 +1,12 @@
 // raddbg 0.9.24 project file
 
 recent_file: path: "../main.odin"
+recent_file: path: "../../../Users/leona/Desktop/Odin/base/runtime/core.odin"
 recent_file: path: "../../../Users/leona/Desktop/Odin/base/runtime/entry_windows.odin"
 recent_file: path: "../gpu/gpu.odin"
 recent_file: path: "../gpu/gpu_vulkan.odin"
 recent_file: path: "../../../Users/leona/Desktop/Odin/core/fmt/fmt.odin"
 recent_file: path: "D:/a/_work/1/s/src/vctools/crt/vcstartup/src/startup/exe_common.inl"
-recent_file: path: "../../../Users/leona/Desktop/Odin/base/runtime/core.odin"
 recent_file: path: "../test.odin"
 recent_file: path: "../gpu/impl/impl.odin"
 target:
@@ -18,20 +18,10 @@ target:
 debug_info:
 {
   path: "C:/work/no_gfx_api/build/test.pdb"
-  timestamp: 66201529703248
+  timestamp: 66201546207473
 }
 debug_info:
 {
   path: "C:/VulkanSDK/1.4.328.1/Bin/VkLayer_khronos_validation.pdb"
   timestamp: 66195149097198
-}
-breakpoint:
-{
-  source_location: "../main.odin:59:1"
-  hit_count: 0
-}
-breakpoint:
-{
-  source_location: "../main.odin:67:1"
-  hit_count: 0
 }

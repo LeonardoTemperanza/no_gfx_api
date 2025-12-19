@@ -1,0 +1,5 @@
+
+main :: (color: vec3 @loc(0)) -> vec4 @target(0)
+{
+    return color;
+}

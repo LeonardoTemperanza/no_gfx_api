@@ -32,6 +32,9 @@ Blend_Op :: enum { Add, Subtract, Rev_Subtract, Min, Max }
 Blend_Factor :: enum { Zero, One, Src_Color, Dst_Color, Src_Alpha }
 Depth_Mode :: enum { Read = 0, Write }
 Depth_Flags :: bit_set[Depth_Mode; u32]
+Hazard :: enum { Draw_Arguments = 0, Descriptors, Depth_Stencil }
+Hazard_Flags :: bit_set[Hazard; u32]
+Stage :: enum { Transfer = 0, Compute, Raster_Color_Out, Fragment_Shader, Vertex_Shader, All }
 
 // Constants
 All_Mips: u8 : max(u8)
@@ -109,7 +112,7 @@ Blend_State :: struct
 // Initialization and interaction with the OS. This is simpler than it would actually be, for brevity.
 init: proc(window: ^sdl.Window) : _init
 cleanup: proc() : _cleanup
-get_swapchain: proc(window: ^sdl.Window) -> vk.ImageView : _get_swapchain
+swapchain_acquire_next: proc() -> vk.ImageView : _swapchain_acquire_next
 swapchain_present: proc() : _swapchain_present
 
 // Memory
@@ -134,7 +137,7 @@ cmd_mem_copy: proc(cmd_buf: Command_Buffer, src, dst: rawptr, bytes: u64) : _cmd
 
 //cmd_set_active_texture_heap_ptr: proc(cmd_buf: Command_Buffer, ptr: rawptr) : _cmd_set_active_texture_heap_ptr
 
-//cmd_barrier: proc() : _cmd_barrier
+cmd_barrier: proc(cmd_buf: Command_Buffer, before: Stage, after: Stage, hazards: Hazard_Flags = {}) : _cmd_barrier
 //cmd_signal_after: proc() : _cmd_signal_after
 //cmd_wait_before: proc() : _cmd_wait_before
 
@@ -149,7 +152,7 @@ cmd_begin_render_pass: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc) : _
 cmd_end_render_pass: proc(cmd_buf: Command_Buffer) : _cmd_end_render_pass
 
 // Indices can be nil
-cmd_draw_indexed_instanced: proc(cmd_buf: Command_Buffer, vertex_data: rawptr, pixel_data: rawptr,
+cmd_draw_indexed_instanced: proc(cmd_buf: Command_Buffer, vertex_data: rawptr, fragment_data: rawptr,
                                  indices: rawptr, index_count: u32, instance_count: u32 = 1) : _cmd_draw_indexed_instanced
 
 /////////////////////////

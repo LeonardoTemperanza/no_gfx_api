@@ -9,6 +9,7 @@ layout(location = 0) out vec4 out_color;
 struct Vertex
 {
     vec4 pos;
+    vec4 color;
 };
 
 layout(buffer_reference, std140) readonly buffer _res_slice_Vertex
@@ -42,7 +43,7 @@ void main()
         vec2( 0.5, -0.5),
     };
 
-    out_color = vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    out_color = data._res_.verts[id]._res_.color;
     gl_Position = vec4(data._res_.verts[id]._res_.pos.xyz, 1.0f);
     //gl_Position = vec4(verts[id], 0.0f, 1.0f);
 }
