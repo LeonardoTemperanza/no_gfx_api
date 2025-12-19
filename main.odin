@@ -42,15 +42,15 @@ main :: proc()
     vert_shader := gpu.shader_create(#load("shaders/test.vert.spv", []u32), .Vertex)
     frag_shader := gpu.shader_create(#load("shaders/test.frag.spv", []u32), .Fragment)
 
-    Vertex :: struct { pos: [3]f32 }
+    Vertex :: struct { pos: [4]f32 }
 
     arena := gpu.arena_init(1024 * 1024)
     defer gpu.arena_destroy(&arena)
 
     verts := gpu.arena_alloc_array(&arena, Vertex, 3)
-    verts.cpu[0].pos = { -0.5, -0.5, 0.0 }
-    verts.cpu[1].pos = {  0.0,  0.5, 0.0 }
-    verts.cpu[2].pos = {  0.5, -0.5, 0.0 }
+    verts.cpu[0].pos = { -0.5, -0.5, 0.0, 0.0 }
+    verts.cpu[1].pos = {  0.0,  0.5, 0.0, 0.0 }
+    verts.cpu[2].pos = {  0.5, -0.5, 0.0, 0.0 }
 
     indices := gpu.arena_alloc_array(&arena, u32, 3)
     indices.cpu[0] = 0
@@ -85,5 +85,9 @@ main :: proc()
     gpu.cmd_end_render_pass(cmd_buf)
     gpu.queue_submit(queue, { cmd_buf })
 
-    // gpu.swapchain_acquire_next()
+    gpu.swapchain_present()
+
+    //gpu.get_swapchain(window)
+
+    sdl.Delay(3000)
 }

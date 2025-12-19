@@ -327,7 +327,20 @@ _cleanup :: proc()
 
 _get_swapchain :: proc(window: ^sdl.Window) -> vk.ImageView
 {
-    return ctx.swapchain.image_views[0]
+    fence_ci := vk.FenceCreateInfo {
+        sType = .FENCE_CREATE_INFO,
+        flags = { },
+    }
+    fence: vk.Fence
+    vk_check(vk.CreateFence(ctx.device, &fence_ci, nil, &fence))
+    defer vk.DestroyFence(ctx.device, fence, nil)
+
+    image_idx: u32
+    vk_check(vk.AcquireNextImageKHR(ctx.device, ctx.swapchain.handle, max(u64), {}, fence, &image_idx))
+
+    vk_check(vk.WaitForFences(ctx.device, 1, &fence, true, max(u64)))
+
+    return ctx.swapchain.image_views[image_idx]
 }
 
 swapchain_wait_next :: proc() -> vk.ImageView
@@ -335,9 +348,17 @@ swapchain_wait_next :: proc() -> vk.ImageView
     return {}
 }
 
-swapchain_present :: proc()
+_swapchain_present :: proc()
 {
-
+    image_idx := u32(0)
+    vk_check(vk.QueuePresentKHR(ctx.queue, &{
+        sType = .PRESENT_INFO_KHR,
+        //waitSemaphoreCount = 1,
+        //pWaitSemaphores = &present_semaphore,
+        swapchainCount = 1,
+        pSwapchains = &ctx.swapchain.handle,
+        pImageIndices = &image_idx,
+    }))
 }
 
 _mem_alloc :: proc(bytes: u64, align: u64 = 1, mem_type := Memory.Default) -> rawptr
@@ -425,6 +446,8 @@ _mem_free :: proc(ptr: rawptr, loc := #caller_location)
 
 _host_to_device_ptr :: proc(ptr: rawptr) -> rawptr
 {
+    // We could do a tree search here but that would be more expensive
+
     meta_idx, found := ctx.cpu_ptr_to_alloc[ptr]
     if !found
     {
@@ -607,14 +630,14 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc)
         loadOp = .CLEAR,
         storeOp = .STORE,
         clearValue = {
-            color = { float32 = { 0.0, 0.0, 0.0, 0.0 } }
+            color = { float32 = { 0.1, 0.1, 0.1, 0.0 } }
         }
     }
     rendering_info := vk.RenderingInfo {
         sType = .RENDERING_INFO,
         renderArea = {
             offset = { 0, 0 },
-            extent = { 1000, 1000 }
+            extent = { 4000, 2000 }
         },
         layerCount = 1,
         colorAttachmentCount = 1,
@@ -642,7 +665,7 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc)
 
     viewport := vk.Viewport {
         x = 0, y = 0,
-        width = 1000, height = 1000,
+        width = 4000, height = 2000,
         minDepth = 0.0, maxDepth = 1.0,
     }
     vk.CmdSetViewportWithCount(vk_cmd_buf, 1, &viewport)
@@ -651,7 +674,7 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc)
             x = 0, y = 0
         },
         extent = {
-            width = 1000, height = 1000,
+            width = 3000, height = 2000,
         }
     }
     vk.CmdSetScissorWithCount(vk_cmd_buf, 1, &scissor)
@@ -898,6 +921,7 @@ create_swapchain :: proc(width: u32, height: u32) -> Swapchain
     return res
 }
 
+@(private="file")
 Swapchain :: struct
 {
     handle: vk.SwapchainKHR,

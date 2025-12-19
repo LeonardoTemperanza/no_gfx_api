@@ -2,12 +2,13 @@
 #version 460
 
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference2 : require
 
 layout(location = 0) out vec4 out_color;
 
 struct Vertex
 {
-    vec3 pos;
+    vec4 pos;
 };
 
 layout(buffer_reference, std140) readonly buffer _res_slice_Vertex
@@ -42,6 +43,6 @@ void main()
     };
 
     out_color = vec4(1.0f, 0.0f, 0.0f, 1.0f);
-    gl_Position = vec4(data._res_.verts._res_.pos, 0.0f);
-    //gl_Position = vec4(verts[id], 0.0f, 0.0f);
+    gl_Position = vec4(data._res_.verts[id]._res_.pos.xyz, 1.0f);
+    //gl_Position = vec4(verts[id], 0.0f, 1.0f);
 }

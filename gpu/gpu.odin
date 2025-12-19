@@ -110,6 +110,7 @@ Blend_State :: struct
 init: proc(window: ^sdl.Window) : _init
 cleanup: proc() : _cleanup
 get_swapchain: proc(window: ^sdl.Window) -> vk.ImageView : _get_swapchain
+swapchain_present: proc() : _swapchain_present
 
 // Memory
 mem_alloc: proc(bytes: u64, align: u64 = 1, mem_type := Memory.Default) -> rawptr : _mem_alloc
