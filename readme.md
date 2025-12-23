@@ -90,7 +90,7 @@ For a full, working example check out the examples/example1 directory in this re
 
 ## Problems
 There are a few problems with building this API on top of Vulkan:
-1) Vulkan is still a buffer-centric API, so unfortunately in some places I needed a tree lookup for "pointer → (buffer_handle, offset)" translation. This in theory shouldn't a huge deal as long as we do few allocations and relay on sub-allocation schemes.
+1) Vulkan is still a buffer-centric API, so unfortunately in some places I needed a tree lookup for "pointer → (buffer_handle, offset)" translation. This in theory shouldn't be a huge deal as long as we do few allocations and relay on sub-allocation schemes.
 2) Shader arguments are all passed via a single pointer. This prevents the prefetching discussed in the article from taking place, so I think shaders will in general be slightly slower.
 
 ## Mockup Shading Language (MUSL)
