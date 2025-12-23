@@ -58,7 +58,7 @@ typecheck_statement :: proc(using c: ^Checker, statement: ^Ast_Statement)
         }
         case ^Ast_Var_Decl:
         {
-
+            
         }
         case ^Ast_Return:
         {
