@@ -28,13 +28,15 @@ typecheck_ast :: proc(ast: Ast, allocator: runtime.Allocator) -> bool
         }
     }
 
-    return true
+    return !c.error
 }
 
 Checker :: struct
 {
     ast: Ast,
-    proc_def: ^Ast_Proc_Decl
+    proc_def: ^Ast_Proc_Decl,
+    input_path: string,
+    error: bool,
 }
 
 typecheck_statement :: proc(using c: ^Checker, statement: ^Ast_Statement)
@@ -50,7 +52,9 @@ typecheck_statement :: proc(using c: ^Checker, statement: ^Ast_Statement)
             typecheck_expr(c, stmt.lhs)
             typecheck_expr(c, stmt.rhs)
 
-            // if !same_type(stmt.lhs.type, stmt.rhs.type) do panic("Mismatching types")
+            /*if !same_type(stmt.lhs.type, stmt.rhs.type) {
+                typecheck_error(c, expr.token, "Mismatching types.")
+            }*/
         }
         case ^Ast_Var_Decl:
         {
@@ -72,14 +76,18 @@ typecheck_expr :: proc(using c: ^Checker, expression: ^Ast_Expr)
             typecheck_expr(c, expr.lhs)
             typecheck_expr(c, expr.rhs)
 
-            if !same_type(expr.lhs.type, expr.rhs.type) do panic("Mismatching types")
+            if !same_type(expr.lhs.type, expr.rhs.type) {
+                typecheck_error(c, expr.token, "Mismatching types.")
+            }
 
             expr.type = expr.lhs.type
         }
         case ^Ast_Ident_Expr:
         {
             info, ok := var_name_resolve(c, expr.token.text, expr.token)
-            if !ok do panic("Identifier not found")
+            if !ok {
+                typecheck_error(c, expr.token, "Couldn't find declaration of this identifier.")
+            }
             expr.type = new(Ast_Type)
             expr.type^ = {
                 name = info.name,
@@ -101,7 +109,9 @@ typecheck_expr :: proc(using c: ^Checker, expression: ^Ast_Expr)
                 break
             }
 
-            if expr.target.type.struct_decl == nil do panic("Can't access member on this type")
+            if expr.target.type.struct_decl == nil {
+                typecheck_error(c, expr.token, "Can't access members on this type.")
+            }
 
             struct_decl := expr.target.type.struct_decl
             found_field := false
@@ -116,10 +126,14 @@ typecheck_expr :: proc(using c: ^Checker, expression: ^Ast_Expr)
                 }
             }
 
-            if !found_field do panic("Member not found")
+            if !found_field {
+                typecheck_error(c, expr.token, "Member not found.")
+            }
 
             type_resolved, ok := search_type(c, type.name)
-            if !ok do panic("Type not found")
+            if !ok {
+                typecheck_error(c, expr.token, "Type not found.")
+            }
             expr.type = type
             expr.type.struct_decl = type_resolved.struct_decl
         }
@@ -249,4 +263,12 @@ is_primitive_type :: proc(str: string) -> bool
     }
 
     return false
+}
+
+typecheck_error :: proc(using c: ^Checker, token: Token, fmt_str: string, args: ..any)
+{
+    if error do return
+
+    error_msg(input_path, token, fmt_str, ..args)
+    error = true
 }
