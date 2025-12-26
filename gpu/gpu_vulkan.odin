@@ -212,22 +212,10 @@ _init :: proc(window: ^sdl.Window)
     // Device
     device_extensions := []cstring {
         vk.KHR_SWAPCHAIN_EXTENSION_NAME,
-        vk.EXT_SHADER_OBJECT_EXTENSION_NAME,
-        vk.KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-        vk.KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
-        vk.KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-        vk.KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME,
-        vk.KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
+        vk.EXT_SHADER_OBJECT_EXTENSION_NAME
     }
 
     next: rawptr
-    /*
-    next = &vk.PhysicalDeviceMaintenance6Features {
-        sType = .PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES,
-        pNext = next,
-        maintenance6 = true,
-    }
-    */
     next = &vk.PhysicalDeviceVulkan12Features {
         sType = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
         pNext = next,
@@ -252,27 +240,12 @@ _init :: proc(window: ^sdl.Window)
         pNext = next,
         depthClipEnable = true,
     }
-    next = &vk.PhysicalDeviceAccelerationStructureFeaturesKHR {
-        sType = .PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
-        pNext = next,
-        accelerationStructure = true,
-    }
-    next = &vk.PhysicalDeviceRayTracingPipelineFeaturesKHR {
-        sType = .PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR,
-        pNext = next,
-        rayTracingPipeline = true,
-    }
     next = &vk.PhysicalDeviceFeatures2 {
         sType = .PHYSICAL_DEVICE_FEATURES_2,
         pNext = next,
         features = {
             shaderInt64 = true,
         }
-    }
-    next = &vk.PhysicalDeviceRayTracingPositionFetchFeaturesKHR {
-        sType = .PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR,
-        pNext = next,
-        rayTracingPositionFetch = true,
     }
 
     device_ci := vk.DeviceCreateInfo {
