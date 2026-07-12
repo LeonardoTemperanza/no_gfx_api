@@ -725,38 +725,38 @@ _init :: proc(validation := true, loc := #caller_location) -> bool
     // VMA allocator
     vma_vulkan_procs := vma.create_vulkan_functions()
     // VMA validates KHR aliases; some loaders expose only core names on 1.1+.
-    if vma_vulkan_procs.get_buffer_memory_requirements2_khr == nil && vk.GetDeviceProcAddr != nil {
+    if vma_vulkan_procs.GetBufferMemoryRequirements2KHR == nil && vk.GetDeviceProcAddr != nil {
         addr := vk.GetDeviceProcAddr(ctx.device, "vkGetBufferMemoryRequirements2")
         if addr == nil do addr = vk.GetDeviceProcAddr(ctx.device, "vkGetBufferMemoryRequirements2KHR")
-        vma_vulkan_procs.get_buffer_memory_requirements2_khr = auto_cast addr
+        vma_vulkan_procs.GetBufferMemoryRequirements2KHR = auto_cast addr
     }
-    if vma_vulkan_procs.get_image_memory_requirements2_khr == nil && vk.GetDeviceProcAddr != nil {
+    if vma_vulkan_procs.GetImageMemoryRequirements2KHR == nil && vk.GetDeviceProcAddr != nil {
         addr := vk.GetDeviceProcAddr(ctx.device, "vkGetImageMemoryRequirements2")
         if addr == nil do addr = vk.GetDeviceProcAddr(ctx.device, "vkGetImageMemoryRequirements2KHR")
-        vma_vulkan_procs.get_image_memory_requirements2_khr = auto_cast addr
+        vma_vulkan_procs.GetImageMemoryRequirements2KHR = auto_cast addr
     }
-    if vma_vulkan_procs.bind_buffer_memory2_khr == nil && vk.GetDeviceProcAddr != nil {
+    if vma_vulkan_procs.BindBufferMemory2KHR == nil && vk.GetDeviceProcAddr != nil {
         addr := vk.GetDeviceProcAddr(ctx.device, "vkBindBufferMemory2")
         if addr == nil do addr = vk.GetDeviceProcAddr(ctx.device, "vkBindBufferMemory2KHR")
-        vma_vulkan_procs.bind_buffer_memory2_khr = auto_cast addr
+        vma_vulkan_procs.BindBufferMemory2KHR = auto_cast addr
     }
-    if vma_vulkan_procs.bind_image_memory2_khr == nil && vk.GetDeviceProcAddr != nil {
+    if vma_vulkan_procs.BindImageMemory2KHR == nil && vk.GetDeviceProcAddr != nil {
         addr := vk.GetDeviceProcAddr(ctx.device, "vkBindImageMemory2")
         if addr == nil do addr = vk.GetDeviceProcAddr(ctx.device, "vkBindImageMemory2KHR")
-        vma_vulkan_procs.bind_image_memory2_khr = auto_cast addr
+        vma_vulkan_procs.BindImageMemory2KHR = auto_cast addr
     }
-    if vma_vulkan_procs.get_physical_device_memory_properties2_khr == nil && vk.GetInstanceProcAddr != nil {
+    if vma_vulkan_procs.GetPhysicalDeviceMemoryProperties2KHR == nil && vk.GetInstanceProcAddr != nil {
         addr := vk.GetInstanceProcAddr(ctx.instance, "vkGetPhysicalDeviceMemoryProperties2")
         if addr == nil do addr = vk.GetInstanceProcAddr(ctx.instance, "vkGetPhysicalDeviceMemoryProperties2KHR")
-        vma_vulkan_procs.get_physical_device_memory_properties2_khr = auto_cast addr
+        vma_vulkan_procs.GetPhysicalDeviceMemoryProperties2KHR = auto_cast addr
     }
-    ok_vma := vma.create_allocator({
-        flags = { .Buffer_Device_Address },
+    ok_vma := vma.CreateAllocator({
+        flags = { .BUFFER_DEVICE_ADDRESS },
         instance = ctx.instance,
-        vulkan_api_version = vk.API_VERSION_1_3,
-        physical_device = ctx.phys_device,
+        vulkanApiVersion = vk.API_VERSION_1_3,
+        physicalDevice = ctx.phys_device,
         device = ctx.device,
-        vulkan_functions = &vma_vulkan_procs,
+        pVulkanFunctions = &vma_vulkan_procs,
     }, &ctx.vma_allocator)
     assert(ok_vma == .SUCCESS)
 
@@ -946,7 +946,7 @@ _cleanup :: proc(loc := #caller_location)
         semaphore_destroy(semaphore)
     }
 
-    vma.destroy_allocator(ctx.vma_allocator)
+    vma.DestroyAllocator(ctx.vma_allocator)
 
     // Check for leaked resources
     can_destroy_device := true
@@ -1206,24 +1206,24 @@ _mem_alloc_raw :: proc(#any_int el_size, #any_int el_count, #any_int align: i64,
     bytes := el_size * el_count
     if bytes == 0 do return {}
 
-    vma_usage: vma.Memory_Usage
+    vma_usage: vma.MemoryUsage
     properties: vk.MemoryPropertyFlags
     switch mem_type
     {
         case .Default:
         {
             properties = { .HOST_VISIBLE, .HOST_COHERENT }
-            vma_usage = .Cpu_To_Gpu
+            vma_usage = .CPU_TO_GPU
         }
         case .GPU:
         {
             properties = { .DEVICE_LOCAL }
-            vma_usage = .Gpu_Only
+            vma_usage = .GPU_ONLY
         }
         case .Readback:
         {
             properties = { .HOST_VISIBLE, .HOST_CACHED, .HOST_COHERENT }
-            vma_usage = .Gpu_To_Cpu
+            vma_usage = .CPU_TO_GPU
         }
     }
 
@@ -1248,19 +1248,19 @@ _mem_alloc_raw :: proc(#any_int el_size, #any_int el_count, #any_int align: i64,
 
     mem_requirements.alignment = vk.DeviceSize(max(i64(mem_requirements.alignment), align))
 
-    alloc_ci := vma.Allocation_Create_Info {
-        flags = vma.Allocation_Create_Flags { .Mapped } if mem_type != .GPU else {},
+    alloc_ci := vma.AllocationCreateInfo {
+        flags = vma.AllocationCreateFlags { .MAPPED } if mem_type != .GPU else {},
         usage = vma_usage,
-        required_flags = properties,
+        requiredFlags = properties,
     }
     alloc: vma.Allocation
-    vma_alloc_info: vma.Allocation_Info
-    vk_check(vma.allocate_memory(ctx.vma_allocator, mem_requirements, alloc_ci, &alloc, &vma_alloc_info))
+    vma_alloc_info: vma.AllocationInfo
+    vk_check(vma.AllocateMemory(ctx.vma_allocator, mem_requirements, alloc_ci, &alloc, &vma_alloc_info))
 
-    vk_check(vma.bind_buffer_memory(ctx.vma_allocator, alloc, buf))
+    vk_check(vma.BindBufferMemory(ctx.vma_allocator, alloc, buf))
 
     p: ptr
-    if mem_type != .GPU do p.cpu = vma_alloc_info.mapped_data
+    if mem_type != .GPU do p.cpu = vma_alloc_info.pMappedData
 
     info := vk.BufferDeviceAddressInfo {
         sType = .BUFFER_DEVICE_ADDRESS_INFO,
@@ -1331,7 +1331,7 @@ _mem_free_raw :: proc(addr: gpuptr, loc := #caller_location)
     if addr == {} do return
 
     alloc_info := pool_get(&ctx.allocs, alloc)
-    vma.destroy_buffer(ctx.vma_allocator, alloc_info.buf_handle, alloc_info.allocation)
+    vma.DestroyBuffer(ctx.vma_allocator, alloc_info.buf_handle, alloc_info.allocation)
     pool_remove(&ctx.allocs, alloc)
 }
 
@@ -1375,7 +1375,7 @@ _texture_create :: proc(desc: Texture_Desc, storage: gpuptr, queue: Queue = .Mai
     image: vk.Image
     offset := uintptr(storage.ptr) - uintptr(alloc_info.gpu)
     image_ci := to_vk_image_create_info(desc_clean)
-    vk_check(vma.create_aliasing_image2(ctx.vma_allocator, alloc_info.allocation, vk.DeviceSize(offset), image_ci, &image))
+    vk_check(vma.CreateAliasingImage2(ctx.vma_allocator, alloc_info.allocation, vk.DeviceSize(offset), image_ci, &image))
 
     plane_aspect := to_vk_image_aspect_flags(desc_clean.format)
 

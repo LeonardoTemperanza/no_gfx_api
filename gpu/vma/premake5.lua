@@ -18,8 +18,8 @@ if _PREMAKE_VERSION < "5.0" then
 end
 
 -- Constants and options
-VMA_VERSION = "v3.3.0"
-VULKAN_HEADERS_VERSION = "v1.4.337"
+VMA_VERSION = "v3.4.0"
+VULKAN_HEADERS_VERSION = "v1.4.355"
 
 -- Utility functions
 local redirectNul = (os.host() == "windows") and ">nul 2>&1" or ">/dev/null 2>&1"
@@ -224,4 +224,4 @@ project "vma"
         defines { "NDEBUG" }
         optimize "Speed"
         symbols "Off"
-        flags { "NoMinimalRebuild" }
+        minimalrebuild "Off"
