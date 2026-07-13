@@ -750,6 +750,11 @@ _init :: proc(validation := true, loc := #caller_location) -> bool
         if addr == nil do addr = vk.GetInstanceProcAddr(ctx.instance, "vkGetPhysicalDeviceMemoryProperties2KHR")
         vma_vulkan_procs.GetPhysicalDeviceMemoryProperties2KHR = auto_cast addr
     }
+    if vma_vulkan_procs.GetPhysicalDeviceProperties2KHR == nil && vk.GetInstanceProcAddr != nil {
+        addr := vk.GetInstanceProcAddr(ctx.instance, "vkGetPhysicalDeviceProperties2")
+        if addr == nil do addr = vk.GetInstanceProcAddr(ctx.instance, "vkGetPhysicalDeviceProperties2KHR")
+        vma_vulkan_procs.GetPhysicalDeviceProperties2KHR = auto_cast addr
+    }
     ok_vma := vma.CreateAllocator({
         flags = { .BUFFER_DEVICE_ADDRESS },
         instance = ctx.instance,
