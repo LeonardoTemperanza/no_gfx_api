@@ -1228,7 +1228,7 @@ _mem_alloc_raw :: proc(#any_int el_size, #any_int el_count, #any_int align: i64,
         case .Readback:
         {
             properties = { .HOST_VISIBLE, .HOST_CACHED, .HOST_COHERENT }
-            vma_usage = .CPU_TO_GPU
+            vma_usage = .GPU_TO_CPU
         }
     }
 
