@@ -587,8 +587,8 @@ RAYQUERY_TYPE := Ast_Type { kind = .Primitive, primitive_kind = .Ray_Query, name
 
 same_type :: proc(type1: ^Ast_Type, type2: ^Ast_Type) -> bool
 {
-    if type1.kind == .Poison || type2.kind == .Poison do return false
     if type1 == nil || type2 == nil do return false
+    if type1.kind == .Poison || type2.kind == .Poison do return false
     if type1.kind != type2.kind do return false
     if type1.primitive_kind != type2.primitive_kind do return false
     if type1.name.text != type2.name.text do return false
