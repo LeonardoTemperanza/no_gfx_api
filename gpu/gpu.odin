@@ -414,7 +414,7 @@ ptr_advance :: proc(addr: ptr, #any_int offset: i64) -> ptr
     res := addr
     if res.cpu != nil { res.cpu = rawptr(uintptr(res.cpu) + uintptr(offset)) }
     res.gpu.ptr = rawptr(uintptr(res.gpu.ptr) + uintptr(offset))
-    return addr
+    return res
 }
 
 // Slice
