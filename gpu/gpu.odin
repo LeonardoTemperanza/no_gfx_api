@@ -29,6 +29,15 @@ Texture_Descriptor :: distinct Big_Handle
 Sampler_Descriptor :: distinct Handle
 
 // Enums
+Present_Mode :: enum
+{
+    Auto_VSync = 0,  // First supported from [ FifoRelaxed, Fifo ].
+    Auto_No_VSync,   // First supported from [ Immediate, Mailbox, Fifo].
+    Fifo,            // Standard V-SYNC. Guaranteed to be supported.
+    Fifo_Relaxed,    // Low support coverage. V-SYNC with reduced stutter, will tear when rendering slower than refresh.
+    Mailbox,         // V-SYNC, but rendering still goes as fast as possible.
+    Immediate,       // no V-SYNC, tearing will occur.
+}
 Feature :: enum { Raytracing = 0, Draw_Indirect_Multi }
 Features :: bit_set[Feature; u32]
 Memory :: enum { Default = 0, GPU, Readback }
@@ -294,7 +303,8 @@ Device_Limits :: struct
 init: proc(validation := true, loc := #caller_location) -> bool : _init
 cleanup: proc(loc := #caller_location) : _cleanup
 wait_idle: proc() : _wait_idle
-swapchain_init: proc(surface: vk.SurfaceKHR, init_size: [2]u32, frames_in_flight: u32) : _swapchain_init
+// Can be called for recreation. Automatically destroyed by cleanup()
+swapchain_create: proc(surface: vk.SurfaceKHR, init_size: [2]u32, frames_in_flight: u32, present_mode: Present_Mode = {}) : _swapchain_create
 swapchain_resize: proc(size: [2]u32) : _swapchain_resize  // NOTE: Do not call this every frame! Only if the dimensions change.
 swapchain_acquire_next: proc() -> Texture : _swapchain_acquire_next  // Blocks CPU until at least one frame is available.
 swapchain_present: proc(queue: Queue, sem_wait: Semaphore, wait_value: u64) : _swapchain_present
@@ -739,7 +749,7 @@ bvh_alloc_build_scratch_buffer :: proc { blas_alloc_build_scratch_buffer, tlas_a
 
 // Swapchain utils
 
-swapchain_init_from_sdl :: proc(window: ^sdl.Window, frames_in_flight: u32)
+swapchain_create_from_sdl :: proc(window: ^sdl.Window, frames_in_flight: u32, present_mode: Present_Mode = {})
 {
     vk_surface: vk.SurfaceKHR
     ok := sdl.Vulkan_CreateSurface(window, vk_get_instance(), nil, &vk_surface)
@@ -748,7 +758,7 @@ swapchain_init_from_sdl :: proc(window: ^sdl.Window, frames_in_flight: u32)
     window_size_x: i32
     window_size_y: i32
     sdl.GetWindowSize(window, &window_size_x, &window_size_y)
-    swapchain_init(vk_surface, { u32(max(0, window_size_x)), u32(max(0, window_size_y)) }, frames_in_flight)
+    swapchain_create(vk_surface, { u32(max(0, window_size_x)), u32(max(0, window_size_y)) }, frames_in_flight, present_mode)
 }
 
 // Texture utils
@@ -839,7 +849,7 @@ Descriptor_Pool :: struct
     bvh_pool: Descriptor_Pool_Resource(BVH),
 }
 
-// NOTE: There can be fragmentation so make sure you reverse more
+// NOTE: There can be fragmentation so make sure you reserve more
 // slots than are actually needed. Most of the time a single global
 // descriptor pool is good enough and for that, these defaults are
 // fairly reasonable.

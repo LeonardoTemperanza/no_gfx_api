@@ -50,7 +50,7 @@ main :: proc()
     ensure(ok)
     defer gpu.cleanup()
 
-    gpu.swapchain_init_from_sdl(window, Frames_In_Flight)
+    gpu.swapchain_create_from_sdl(window, Frames_In_Flight)
 
     vert_shader := gpu.shader_create(#load("shaders/shader.vert.spv", []u32), .Vertex)
     frag_shader := gpu.shader_create(#load("shaders/shader.frag.spv", []u32), .Fragment)

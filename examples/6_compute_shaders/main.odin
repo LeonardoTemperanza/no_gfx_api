@@ -49,7 +49,7 @@ main :: proc()
     ensure(ok)
     defer gpu.cleanup()
 
-    gpu.swapchain_init_from_sdl(window, Frames_In_Flight)
+    gpu.swapchain_create_from_sdl(window, Frames_In_Flight)
 
     group_size_x := u32(8)
     group_size_y := u32(8)

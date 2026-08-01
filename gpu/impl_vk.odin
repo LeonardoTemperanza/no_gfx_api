@@ -69,8 +69,8 @@ Context :: struct
 
     // Swapchain
     swapchain: Swapchain,
+    swapchain_desc: Swapchain_Desc,
     swapchain_image_idx: u32,
-    frames_in_flight: u32,
 
     queue_lock: sync.Atomic_Mutex,
     tls_lock: sync.Atomic_Mutex,
@@ -363,7 +363,7 @@ _init :: proc(validation := true, loc := #caller_location) -> bool
         vk.KHR_RAY_QUERY_EXTENSION_NAME,
     }
 
-    draw_indirect_multi_extension := cstring(vk.KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME) 
+    draw_indirect_multi_extension := cstring(vk.KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME)
 
     // Query physical device feature availability
     {
@@ -496,7 +496,7 @@ _init :: proc(validation := true, loc := #caller_location) -> bool
             log_unsupported_extensions(unsupported_extensions[:], loc)
             return false
         }
-        
+
         // Add optional extensions
         if .Raytracing in ctx.features
         {
@@ -1029,9 +1029,19 @@ _wait_idle :: proc()
     if sync.guard(&ctx.queue_lock) do vk.DeviceWaitIdle(ctx.device)
 }
 
-_swapchain_init :: proc(surface: vk.SurfaceKHR, init_size: [2]u32, frames_in_flight: u32)
+_swapchain_create :: proc(surface: vk.SurfaceKHR, init_size: [2]u32, frames_in_flight: u32, present_mode: Present_Mode = {})
 {
-    ctx.frames_in_flight = frames_in_flight
+    if ctx.swapchain.handle != {} {
+        queue_wait_idle(.Main)
+        destroy_swapchain(&ctx.swapchain)
+    }
+
+    ctx.swapchain_desc = {
+        frames_in_flight = frames_in_flight,
+        width = init_size.x,
+        height = init_size.y,
+        present_mode = present_mode,
+    }
     ctx.surface = surface
 
     // NOTE: surface_caps.currentExtent could be max(u32)!!!
@@ -1044,19 +1054,21 @@ _swapchain_init :: proc(surface: vk.SurfaceKHR, init_size: [2]u32, frames_in_fli
     }
     assert(extent.width != max(u32) && extent.height != max(u32))
 
-    ctx.swapchain = create_swapchain(max(extent.width, 1), max(extent.height, 1), ctx.frames_in_flight)
+    ctx.swapchain_desc.width = max(extent.width, 1)
+    ctx.swapchain_desc.height = max(extent.height, 1)
+    ctx.swapchain = create_swapchain(ctx.swapchain_desc)
 }
 
 _swapchain_resize :: proc(size: [2]u32)
 {
-    queue_wait_idle(.Main)
-    recreate_swapchain(size)
-}
+    old_handle := ctx.swapchain.handle
+    if ctx.swapchain.handle != {} {
+        queue_wait_idle(.Main)
+        destroy_swapchain(&ctx.swapchain, free_handle = false)
+    }
 
-@(private="file")
-recreate_swapchain :: proc(size: [2]u32)
-{
-    destroy_swapchain(&ctx.swapchain)
+    ctx.swapchain_desc.width = size.x
+    ctx.swapchain_desc.height = size.y
 
     // NOTE: surface_caps.currentExtent could be max(u32)!!!
     surface_caps: vk.SurfaceCapabilitiesKHR
@@ -1068,7 +1080,13 @@ recreate_swapchain :: proc(size: [2]u32)
     }
     assert(extent.width != max(u32) && extent.height != max(u32))
 
-    ctx.swapchain = create_swapchain(max(extent.width, 1), max(extent.height, 1), ctx.frames_in_flight)
+    ctx.swapchain_desc.width = max(extent.width, 1)
+    ctx.swapchain_desc.height = max(extent.height, 1)
+    ctx.swapchain = create_swapchain(ctx.swapchain_desc, old_handle)
+
+    if old_handle != {} {
+        vk.DestroySwapchainKHR(ctx.device, old_handle, nil)
+    }
 }
 
 _swapchain_acquire_next :: proc() -> Texture
@@ -1117,7 +1135,7 @@ _swapchain_acquire_next :: proc() -> Texture
 
     return Texture {
         type = .D2,
-        dimensions = { ctx.swapchain.width, ctx.swapchain.height, 1 },
+        dimensions = { ctx.swapchain_desc.width, ctx.swapchain_desc.height, 1 },
         format = .BGRA8_Unorm,
         mip_count = 1,
         sample_count = 1,
@@ -1180,7 +1198,7 @@ _swapchain_present :: proc(queue: Queue, sem_wait: Semaphore, wait_value: u64)
             pSwapchains = &ctx.swapchain.handle,
             pImageIndices = &ctx.swapchain_image_idx,
         })
-        if res == .SUBOPTIMAL_KHR do log.warn("Suboptimal swapchain acquire!")
+        if res == .SUBOPTIMAL_KHR do log.warn("Suboptimal swapchain present!")
         if res != .SUCCESS && res != .SUBOPTIMAL_KHR {
             vk_check(res)
         }
@@ -3165,7 +3183,7 @@ vk_debug_callback :: proc "system" (severity: vk.DebugUtilsMessageSeverityFlagsE
 }
 
 @(private="file")
-create_swapchain :: proc(width: u32, height: u32, frames_in_flight: u32) -> Swapchain
+create_swapchain :: proc(swapchain_desc: Swapchain_Desc, prev_swapchain: vk.SwapchainKHR = {}) -> Swapchain
 {
     scratch, _ := acquire_scratch()
 
@@ -3174,7 +3192,7 @@ create_swapchain :: proc(width: u32, height: u32, frames_in_flight: u32) -> Swap
     surface_caps: vk.SurfaceCapabilitiesKHR
     vk_check(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.phys_device, ctx.surface, &surface_caps))
 
-    image_count := max(max(2, surface_caps.minImageCount), frames_in_flight)
+    image_count := max(max(2, surface_caps.minImageCount), swapchain_desc.frames_in_flight)
     if surface_caps.maxImageCount != 0 do assert(image_count <= surface_caps.maxImageCount)
 
     surface_format_count: u32
@@ -3197,16 +3215,7 @@ create_swapchain :: proc(width: u32, height: u32, frames_in_flight: u32) -> Swap
     present_modes := make([]vk.PresentModeKHR, present_mode_count, allocator = scratch)
     vk_check(vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.phys_device, ctx.surface, &present_mode_count, raw_data(present_modes)))
 
-    present_mode := vk.PresentModeKHR.FIFO
-    for candidate in present_modes {
-        if candidate == .MAILBOX {
-            present_mode = candidate
-            break
-        }
-    }
-
-    res.width = width
-    res.height = height
+    vk_present_mode := to_vk_present_mode(swapchain_desc.present_mode, present_modes)
 
     swapchain_ci := vk.SwapchainCreateInfoKHR {
         sType = .SWAPCHAIN_CREATE_INFO_KHR,
@@ -3214,13 +3223,14 @@ create_swapchain :: proc(width: u32, height: u32, frames_in_flight: u32) -> Swap
         minImageCount = image_count,
         imageFormat = surface_format.format,
         imageColorSpace = surface_format.colorSpace,
-        imageExtent = { res.width, res.height },
+        imageExtent = { ctx.swapchain_desc.width, ctx.swapchain_desc.height },
         imageArrayLayers = 1,
         imageUsage = { .COLOR_ATTACHMENT, .TRANSFER_SRC, .TRANSFER_DST },
         preTransform = surface_caps.currentTransform,
         compositeAlpha = { .OPAQUE },
-        presentMode = present_mode,
+        presentMode = vk_present_mode,
         clipped = true,
+        oldSwapchain = prev_swapchain,
     }
     vk_check(vk.CreateSwapchainKHR(ctx.device, &swapchain_ci, nil, &res.handle))
 
@@ -3264,7 +3274,7 @@ create_swapchain :: proc(width: u32, height: u32, frames_in_flight: u32) -> Swap
 }
 
 @(private="file")
-destroy_swapchain :: proc(swapchain: ^Swapchain)
+destroy_swapchain :: proc(swapchain: ^Swapchain, free_handle := true)
 {
     delete(swapchain.images)
     for semaphore in swapchain.present_semaphores {
@@ -3275,7 +3285,10 @@ destroy_swapchain :: proc(swapchain: ^Swapchain)
         vk.DestroyImageView(ctx.device, image_view, nil)
     }
     delete(swapchain.image_views)
-    vk.DestroySwapchainKHR(ctx.device, swapchain.handle, nil)
+
+    if free_handle {
+        vk.DestroySwapchainKHR(ctx.device, swapchain.handle, nil)
+    }
 
     for handle in swapchain.texture_handles
     {
@@ -3293,11 +3306,18 @@ destroy_swapchain :: proc(swapchain: ^Swapchain)
 Swapchain :: struct
 {
     handle: vk.SwapchainKHR,
-    width, height: u32,
     images: []vk.Image,
     texture_handles: []Texture_Handle,
     image_views: []vk.ImageView,
     present_semaphores: []Semaphore,
+}
+
+@(private="file")
+Swapchain_Desc :: struct
+{
+    width, height: u32,
+    frames_in_flight: u32,
+    present_mode: Present_Mode,
 }
 
 @(private="file")

@@ -52,7 +52,7 @@ main :: proc()
     ensure(ok)
     defer gpu.cleanup()
 
-    gpu.swapchain_init_from_sdl(window, Frames_In_Flight)
+    gpu.swapchain_create_from_sdl(window, Frames_In_Flight)
 
     depth_desc := gpu.Texture_Desc {
         dimensions = { u32(window_size_x), u32(window_size_y), 1 },
