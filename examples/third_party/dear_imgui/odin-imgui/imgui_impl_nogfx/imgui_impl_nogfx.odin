@@ -79,7 +79,7 @@ init :: proc(init_info: Init_Info, desc_pool: ^gpu.Descriptor_Pool) -> bool
 
     if !bd.created_device_objects do create_device_objects(desc_pool)
 
-    bd.upload_arena = gpu.arena_init()
+    bd.upload_arena = gpu.arena_create()
     return true
 }
 
@@ -125,7 +125,7 @@ render_draw_data :: proc(draw_data: ^im.Draw_Data, cmd_buf: gpu.Command_Buffer)
     {
         frames_data.count = bd.init_info.frames_in_flight
         for i in 0..<frames_data.count {
-            frames_data.frames[i].staging_arena = gpu.arena_init()
+            frames_data.frames[i].staging_arena = gpu.arena_create()
         }
     }
 

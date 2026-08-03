@@ -4,7 +4,7 @@
 
 It isn't controversial to say this: graphics APIs are a mess. "Modern" graphics APIs – which are a decade old at this point – all present numerous concepts that are completely useless on today's hardware. They are extremely bloated, often adding new extensions to cover for past missteps in the design. It can all be massively simplified.
 
-**no_gfx**'s goal is to implement an ideal "API of the future" on top of existing APIs (Vulkan), greatly simplifying graphics programming without sacrificing modern features like indirect rendering and raytracing. It initially started as a 1:1 recreation of the theoretical API outlined in Sebastian Aaltonen's ["No Graphics API"](https://www.sebastianaaltonen.com/blog/no-graphics-api) blog post; there are now a few divergences – partly due to the limitations of current APIs – but the overall design and core philosophy is still the same.
+**no_gfx**'s goal is to implement an ideal "API of the future" on top of Vulkan, greatly simplifying graphics programming without sacrificing modern features like indirect rendering and raytracing. It initially started as a 1:1 recreation of the theoretical API outlined in Sebastian Aaltonen's ["No Graphics API"](https://www.sebastianaaltonen.com/blog/no-graphics-api) blog post; there are now a few divergences – partly due to the limitations of current APIs – but the overall design and core philosophy is still the same.
 
 ## API Usage
 
@@ -28,7 +28,7 @@ defer {
 }
 
 // --- Create arenas and allocate memory
-arena := gpu.arena_init()
+arena := gpu.arena_create()
 defer gpu.arena_destroy(&arena)
 
 verts := gpu.arena_alloc(&arena, Vertex, 3)
@@ -53,7 +53,7 @@ gpu.queue_submit(.Main, { upload_cmd_buf })
 
 // --- Frame resources
 frame_arenas: [Frames_In_Flight]gpu.Arena
-for &frame_arena in frame_arenas do frame_arena = gpu.arena_init()
+for &frame_arena in frame_arenas do frame_arena = gpu.arena_create()
 defer {
     for &frame_arena in frame_arenas do gpu.arena_destroy(&frame_arena)
 }
@@ -108,8 +108,9 @@ There are many examples you can find in the `examples` directory.
 
 Like most things in life, this is not without its tradeoffs:
 
-1. It assumes relatively recent hardware. It requires Vulkan 1.3 with the following extensions: VK_EXT_shader_object, VK_EXT_descriptor_buffer, VK_KHR_draw_indirect_count. It can use more extensions for optional features such as raytracing.
+1. It assumes relatively recent hardware. It requires Vulkan 1.3 with the VK_EXT_shader_object extension. It can use more extensions for optional features such as raytracing.
 2. Shader arguments are all passed via a single pointer. This is very flexible and easy to work with, but it can also prevent some prefetching/optimizations that drivers usually implement with standard bindings and vertex buffers. This will probably make shaders in general slightly slower. How much impact this will have, I can't say for sure right now. On the other hand, working with a nicer and better API can make optimization easier and quicker.
+3. It currently only targets Vulkan, so it's not fully cross-platform. Mac support is best-effort, through MoltenVK/KosmicKrisp only. Developing on Mac is probably doable, but if shipping to Mac is desired I'd consider the option of writing a separate Metal backend for your application.
 
 ## Shaders
 

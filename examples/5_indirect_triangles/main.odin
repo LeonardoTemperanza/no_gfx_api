@@ -7,6 +7,8 @@ import "core:math/linalg"
 
 import "../../gpu"
 
+import shared "../shared"
+
 import sdl "vendor:sdl3"
 
 Start_Window_Size_X :: 1000
@@ -19,8 +21,7 @@ Use_Indirect_Multi :: true
 
 main :: proc()
 {
-    ok_i := sdl.Init({ .VIDEO })
-    assert(ok_i)
+    shared.sdl_init(moltenvk_working_status = .Partially_Works)
 
     console_logger := log.create_console_logger()
     defer log.destroy_console_logger(console_logger)
@@ -37,14 +38,16 @@ main :: proc()
     window := sdl.CreateWindow(Example_Name, Start_Window_Size_X, Start_Window_Size_Y, window_flags)
     ensure(window != nil)
 
-    window_size_x := i32(Start_Window_Size_X)
-    window_size_y := i32(Start_Window_Size_Y)
+    display_scale: f32 = sdl.GetWindowDisplayScale(window)
+
+    window_size_x := i32(Start_Window_Size_X * display_scale)
+    window_size_y := i32(Start_Window_Size_Y * display_scale)
 
     ok := gpu.init()
     ensure(ok)
     defer gpu.cleanup()
 
-    gpu.swapchain_init_from_sdl(window, Frames_In_Flight)
+    gpu.swapchain_create_from_sdl(window, Frames_In_Flight)
 
     vert_shader := gpu.shader_create(#load("shaders/shader.vert.spv", []u32), .Vertex)
     frag_shader := gpu.shader_create(#load("shaders/shader.frag.spv", []u32), .Fragment)
@@ -55,7 +58,7 @@ main :: proc()
 
     Vertex :: struct { pos: [3]f32 }
 
-    arena := gpu.arena_init()
+    arena := gpu.arena_create()
     defer gpu.arena_destroy(&arena)
 
     verts := gpu.arena_alloc(&arena, Vertex, 3)
@@ -139,7 +142,7 @@ main :: proc()
     now_ts := sdl.GetPerformanceCounter()
 
     frame_arenas: [Frames_In_Flight]gpu.Arena
-    for &frame_arena in frame_arenas do frame_arena = gpu.arena_init()
+    for &frame_arena in frame_arenas do frame_arena = gpu.arena_create()
     defer for &frame_arena in frame_arenas do gpu.arena_destroy(&frame_arena)
     next_frame := u64(1)
     frame_sem := gpu.semaphore_create(0)
@@ -151,7 +154,7 @@ main :: proc()
 
         old_window_size_x := window_size_x
         old_window_size_y := window_size_y
-        sdl.GetWindowSize(window, &window_size_x, &window_size_y)
+        sdl.GetWindowSizeInPixels(window, &window_size_x, &window_size_y)
         if .MINIMIZED in sdl.GetWindowFlags(window) || window_size_x <= 0 || window_size_y <= 0
         {
             sdl.Delay(16)
@@ -199,7 +202,7 @@ main :: proc()
             gpu.cmd_draw_indexed_indirect_multi(cmd_buf, shared_vert_data, {}, indices_local, indirect_data_local, count_local)
         } else {
             // Renders only the first draw from the indirect data buffer
-            gpu.cmd_draw_indexed_indirect(cmd_buf, shared_vert_data, {}, indices_local, indirect_data_local)
+            gpu.cmd_draw_indexed_indirect(cmd_buf, shared_vert_data, {}, indices_local, gpu.slice_to_ptr(indirect_data_local))
         }
 
         gpu.cmd_end_render_pass(cmd_buf)

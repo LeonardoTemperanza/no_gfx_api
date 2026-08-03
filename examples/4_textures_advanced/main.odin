@@ -27,8 +27,7 @@ main :: proc()
     shared.CAM_ANGLE = {math.PI * 0.25, math.PI * 0.25}
     fmt.println("Right-click + WASD for first-person controls.")
 
-    ok_i := sdl.Init({ .VIDEO })
-    assert(ok_i)
+    shared.sdl_init()
 
     console_logger := log.create_console_logger()
     defer log.destroy_console_logger(console_logger)
@@ -45,14 +44,16 @@ main :: proc()
     window := sdl.CreateWindow(Example_Name, Start_Window_Size_X, Start_Window_Size_Y, window_flags)
     ensure(window != nil)
 
-    window_size_x := i32(Start_Window_Size_X)
-    window_size_y := i32(Start_Window_Size_Y)
+    display_scale: f32 = sdl.GetWindowDisplayScale(window)
+
+    window_size_x := i32(Start_Window_Size_X * display_scale)
+    window_size_y := i32(Start_Window_Size_Y * display_scale)
 
     ok := gpu.init()
     ensure(ok)
     defer gpu.cleanup()
 
-    gpu.swapchain_init_from_sdl(window, Frames_In_Flight)
+    gpu.swapchain_create_from_sdl(window, Frames_In_Flight)
 
     depth_desc := gpu.Texture_Desc {
         dimensions = { u32(window_size_x), u32(window_size_y), 1 },
@@ -79,7 +80,7 @@ main :: proc()
     desc_pool := gpu.desc_pool_create()
     defer gpu.desc_pool_destroy(&desc_pool)
 
-    upload_arena := gpu.arena_init()
+    upload_arena := gpu.arena_create()
     defer gpu.arena_destroy(&upload_arena)
 
     upload_cmd_buf := gpu.commands_begin(.Main)
@@ -112,7 +113,7 @@ main :: proc()
     now_ts := sdl.GetPerformanceCounter()
 
     frame_arenas: [Frames_In_Flight]gpu.Arena
-    for &frame_arena in frame_arenas do frame_arena = gpu.arena_init()
+    for &frame_arena in frame_arenas do frame_arena = gpu.arena_create()
     defer for &frame_arena in frame_arenas do gpu.arena_destroy(&frame_arena)
     next_frame := u64(1)
     frame_sem := gpu.semaphore_create(0)
@@ -124,7 +125,7 @@ main :: proc()
 
         old_window_size_x := window_size_x
         old_window_size_y := window_size_y
-        sdl.GetWindowSize(window, &window_size_x, &window_size_y)
+        sdl.GetWindowSizeInPixels(window, &window_size_x, &window_size_y)
         if .MINIMIZED in sdl.GetWindowFlags(window) || window_size_x <= 0 || window_size_y <= 0
         {
             sdl.Delay(16)

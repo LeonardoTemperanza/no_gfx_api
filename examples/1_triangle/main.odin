@@ -7,6 +7,8 @@ import "core:math/linalg"
 
 import "../../gpu"
 
+import shared "../shared"
+
 import sdl "vendor:sdl3"
 
 Start_Window_Size_X :: 1000
@@ -16,8 +18,7 @@ Example_Name :: "Triangle"
 
 main :: proc()
 {
-    ok_i := sdl.Init({ .VIDEO })
-    assert(ok_i)
+    shared.sdl_init()
 
     console_logger := log.create_console_logger()
     defer log.destroy_console_logger(console_logger)
@@ -41,7 +42,7 @@ main :: proc()
     ensure(ok)
     defer gpu.cleanup()
 
-    gpu.swapchain_init_from_sdl(window, Frames_In_Flight)
+    gpu.swapchain_create_from_sdl(window, Frames_In_Flight)
 
     vert_shader := gpu.shader_create(#load("shaders/shader.vert.spv", []u32), .Vertex)
     frag_shader := gpu.shader_create(#load("shaders/shader.frag.spv", []u32), .Fragment)
@@ -52,7 +53,7 @@ main :: proc()
 
     Vertex :: struct { pos: [3]f32, color: [3]f32 }
 
-    arena := gpu.arena_init()
+    arena := gpu.arena_create()
     defer gpu.arena_destroy(&arena)
 
     verts := gpu.arena_alloc(&arena, Vertex, 3)
@@ -84,7 +85,7 @@ main :: proc()
     now_ts := sdl.GetPerformanceCounter()
 
     frame_arenas: [Frames_In_Flight]gpu.Arena
-    for &frame_arena in frame_arenas do frame_arena = gpu.arena_init()
+    for &frame_arena in frame_arenas do frame_arena = gpu.arena_create()
     defer for &frame_arena in frame_arenas do gpu.arena_destroy(&frame_arena)
     next_frame := u64(1)
     frame_sem := gpu.semaphore_create(0)

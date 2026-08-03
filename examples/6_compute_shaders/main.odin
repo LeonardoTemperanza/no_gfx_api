@@ -5,6 +5,7 @@ import log "core:log"
 import "core:math"
 import "core:math/linalg"
 import "core:fmt"
+import "../shared"
 
 import "../../gpu"
 
@@ -22,8 +23,7 @@ main :: proc()
 {
     fmt.println("CREDITS: Shader \"Clearly a bug\" by Glow on https://www.shadertoy.com/view/33cGDj")
 
-    ok_i := sdl.Init({ .VIDEO })
-    assert(ok_i)
+    shared.sdl_init()
 
     console_logger := log.create_console_logger()
     defer log.destroy_console_logger(console_logger)
@@ -40,14 +40,16 @@ main :: proc()
     window := sdl.CreateWindow(Example_Name, Start_Window_Size_X, Start_Window_Size_Y, window_flags)
     ensure(window != nil)
 
-    window_size_x := i32(Start_Window_Size_X)
-    window_size_y := i32(Start_Window_Size_Y)
+    display_scale: f32 = sdl.GetWindowDisplayScale(window)
+
+    window_size_x := i32(Start_Window_Size_X * display_scale)
+    window_size_y := i32(Start_Window_Size_Y * display_scale)
 
     ok := gpu.init()
     ensure(ok)
     defer gpu.cleanup()
 
-    gpu.swapchain_init_from_sdl(window, Frames_In_Flight)
+    gpu.swapchain_create_from_sdl(window, Frames_In_Flight)
 
     group_size_x := u32(8)
     group_size_y := u32(8)
@@ -89,7 +91,7 @@ main :: proc()
 
     Vertex :: struct { pos: [3]f32, uv: [2]f32 }
 
-    arena := gpu.arena_init()
+    arena := gpu.arena_create()
     defer gpu.arena_destroy(&arena)
 
     // Create fullscreen quad
@@ -128,7 +130,7 @@ main :: proc()
     total_time: f32 = 0.0
 
     frame_arenas: [Frames_In_Flight]gpu.Arena
-    for &frame_arena in frame_arenas do frame_arena = gpu.arena_init()
+    for &frame_arena in frame_arenas do frame_arena = gpu.arena_create()
     defer for &frame_arena in frame_arenas do gpu.arena_destroy(&frame_arena)
     next_frame := u64(1)
     frame_sem := gpu.semaphore_create(0)
@@ -140,7 +142,7 @@ main :: proc()
 
         old_window_size_x := window_size_x
         old_window_size_y := window_size_y
-        sdl.GetWindowSize(window, &window_size_x, &window_size_y)
+        sdl.GetWindowSizeInPixels(window, &window_size_x, &window_size_y)
         if .MINIMIZED in sdl.GetWindowFlags(window) || window_size_x <= 0 || window_size_y <= 0
         {
             sdl.Delay(16)

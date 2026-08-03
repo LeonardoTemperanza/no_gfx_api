@@ -408,3 +408,46 @@ to_vk_index_format :: #force_inline proc(index_format: Index_Format) -> vk.Index
     }
     return {}
 }
+
+to_vk_present_mode :: #force_inline proc(present_mode: Present_Mode, supported_present_modes: []vk.PresentModeKHR) -> vk.PresentModeKHR
+{
+    res: vk.PresentModeKHR
+    switch present_mode
+    {
+        case .Auto_VSync:
+        {
+            res = .FIFO
+            // Look for FifoRelaxed
+            for candidate in supported_present_modes {
+                if candidate == .FIFO_RELAXED {
+                    res = candidate
+                    break
+                }
+            }
+        }
+        case .Auto_No_VSync:
+        {
+            res = .FIFO
+            // Look for mailbox
+            for candidate in supported_present_modes {
+                if candidate == .MAILBOX {
+                    res = candidate
+                    break
+                }
+            }
+            // Look for immediate
+            for candidate in supported_present_modes {
+                if candidate == .IMMEDIATE {
+                    res = candidate
+                    break
+                }
+            }
+        }
+        case .Fifo:         res = .FIFO
+        case .Fifo_Relaxed: res = .FIFO_RELAXED
+        case .Mailbox:      res = .MAILBOX
+        case .Immediate:    res = .IMMEDIATE
+    }
+
+    return res
+}

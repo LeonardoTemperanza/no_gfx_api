@@ -497,6 +497,10 @@ codegen_statement :: proc(statement: ^Ast_Statement, insert_semi := true)
                         panic("Not implemented!")
                     }
                 }
+
+                writeln("")
+                write_begin()
+                write("return;")
             }
             else
             {

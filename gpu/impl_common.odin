@@ -112,20 +112,6 @@ pool_get :: proc(pool: ^Resource_Pool($Handle_T, $Info_T), handle: Handle_T) -> 
     return el.info
 }
 
-// To be used like this:
-// if resource, lock := pool_get_mut(&pool, handle); sync.guard(lock)
-pool_get_mut :: proc(pool: ^Resource_Pool($Handle_T, $Info_T), handle: Handle_T) -> (^Info_T, ^sync.Benaphore)
-{
-    assert(pool.init)
-    assert(handle != {})
-
-    key := transmute(Resource_Key) handle
-    el := &pool.resources[key.idx]
-    el_gen := intr.volatile_load(&el.gen)
-    assert(key.gen == el_gen)
-    return &el.info, &pool.resources[key.idx].lock
-}
-
 pool_get_lock :: proc(pool: ^Resource_Pool($Handle_T, $Info_T), handle: Handle_T) -> ^sync.Benaphore
 {
     assert(pool.init)
@@ -136,6 +122,19 @@ pool_get_lock :: proc(pool: ^Resource_Pool($Handle_T, $Info_T), handle: Handle_T
     el_gen := intr.volatile_load(&el.gen)
     assert(key.gen == el_gen)
     return &pool.resources[key.idx].lock
+}
+
+// NOTE: Synchronization must be done by the user! Call sync.guard(pool_get_lock(...))
+// before this or synchronize by other means if needed.
+pool_get_ptr :: proc(pool: ^Resource_Pool($Handle_T, $Info_T), handle: Handle_T) -> ^Info_T
+{
+    assert(pool.init)
+    assert(handle != {})
+    key := transmute(Resource_Key) handle
+
+    el := intr.volatile_load(&pool.resources[key.idx])
+    assert(key.gen == el.gen)
+    return &pool.resources[key.idx].info
 }
 
 pool_add :: proc(pool: ^Resource_Pool($Handle_T, $Info_T), info: Info_T, meta: Resource_Metadata) -> Handle_T
@@ -151,6 +150,7 @@ pool_add :: proc(pool: ^Resource_Pool($Handle_T, $Info_T), info: Info_T, meta: R
         free_idx = u32(len(pool.resources)) - 1
     }
 
+    sync.guard(&pool.resources[free_idx].lock)
     pool.resources[free_idx].info = info
     gen := pool.resources[free_idx].gen
     pool.resources[free_idx].alive = true
