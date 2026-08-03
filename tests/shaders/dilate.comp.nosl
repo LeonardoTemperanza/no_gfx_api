@@ -1,0 +1,44 @@
+
+Data :: struct
+{
+    output: texture_rw_id,
+    input: texture_rw_id,
+}
+
+main :: (data: ^Data @data, gid3: ivec3 @global_invocation_id)
+{
+    gid := gid3.xy;
+
+    tex_size := min(texture_size(data.output), texture_size(data.input));
+
+    if any(gid < ivec2(0)) || any(gid > tex_size) { return; }
+
+    src_color := texture_load(data.input, gid);
+    if src_color.a > 0.5
+    {
+        texture_store(data.output, gid, src_color);
+        return;
+    }
+
+    sample_sum := vec3(0);
+    sample_count: uint = 0;
+    for dy := -1; dy <= 1; dy += 1
+    {
+        for dx := -1; dx <= 1; dx += 1
+        {
+            neighbor_coord := clamp(gid + ivec2(dx, dy), ivec2(0), ivec2(tex_size - 1));
+            neighbor_color := texture_load(data.input, neighbor_coord);
+            if neighbor_color.a > 0.5
+            {
+                sample_sum += neighbor_color.rgb;
+                sample_count += 1;
+            }
+        }
+    }
+
+    if sample_count > 0 {
+        texture_store(data.output, gid, vec4(sample_sum / float(sample_count), 1));
+    } else {
+        texture_store(data.output, gid, src_color);
+    }
+}

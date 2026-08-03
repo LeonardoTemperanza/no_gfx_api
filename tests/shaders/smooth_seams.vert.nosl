@@ -1,0 +1,86 @@
+
+Output :: struct
+{
+    pos: vec4 @position,
+    to_sample: vec2 @io(0),
+}
+
+Data :: struct
+{
+    lm_uvs: []vec2,
+    seams: []Seam,
+    resolution: vec2,
+    a_to_b: bool,
+}
+
+Seam :: struct
+{
+    line_a_0: uint,
+    line_a_1: uint,
+    line_b_0: uint,
+    line_b_1: uint,
+}
+
+main :: (vert_id: uint @vert_id, data: ^Data @data) -> Output
+{
+    // Each quad = 6 vertices (2 triangles, no index buffer)
+    segment := vert_id / 6;
+    local   := vert_id % 6;
+
+    p0: vec2;
+    p1: vec2;
+    other_p0: vec2;
+    other_p1: vec2;
+    if data.a_to_b
+    {
+        p0 = data.lm_uvs[data.seams[segment].line_a_0];
+        other_p0 = data.lm_uvs[data.seams[segment].line_b_0];
+        p1 = data.lm_uvs[data.seams[segment].line_a_1];
+        other_p1 = data.lm_uvs[data.seams[segment].line_b_1];
+    }
+    else
+    {
+        p0 = data.lm_uvs[data.seams[segment].line_b_0];
+        other_p0 = data.lm_uvs[data.seams[segment].line_a_0];
+        p1 = data.lm_uvs[data.seams[segment].line_b_1];
+        other_p1 = data.lm_uvs[data.seams[segment].line_a_1];
+    }
+
+    dir := normalize(p1 - p0);
+    thickness := 1.5;
+    normal := vec2(-dir.y, dir.x) * (thickness / data.resolution);
+
+    // Triangle strip layout for the quad (2 tris, 6 verts):
+    // 0──2  4
+    // │ ╱  ╱│
+    // 1  3──5
+    //
+    // local indices map to corners:
+    // tri1: 0,1,2  tri2: 3,4,5
+
+    // 0=p0, 1=p1
+    corner_x: [6]int;
+    corner_x[0] = 0; corner_x[1] = 0;
+    corner_x[2] = 1; corner_x[3] = 1;
+    corner_x[4] = 1; corner_x[5] = 0;
+
+    // 0=-normal, 1=+normal
+    corner_y: [6]int;
+    corner_y[0] = 0; corner_y[1] = 1;
+    corner_y[2] = 0; corner_y[3] = 1;
+    corner_y[4] = 0; corner_y[5] = 1;
+
+    cap := dir * (0.5 / data.resolution);  // or (1.0 / resolution) if still clipping
+
+    base := mix(p0 - cap, p1 + cap, vec2(float(corner_x[local])));
+    side := -1.0 if corner_y[local] == 0 else 1.0;
+    pos := base + side * normal;
+
+    // Remap to NDC [-1, 1]
+    pos = pos * 2 - vec2(1);
+
+    out: Output;
+    out.pos = vec4(pos, 0.0, 1.0);
+    out.to_sample = other_p0 if corner_x[local] == 0 else other_p1;
+    return out;
+}

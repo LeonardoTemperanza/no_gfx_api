@@ -1,0 +1,105 @@
+// Shader "Clearly a bug" by Glow on https://www.shadertoy.com/view/33cGDj
+
+Data :: struct
+{
+    output_texture_id: texture_rw_id,
+    time: float,
+}
+
+// Helper to construct 2x2 matrix from vec4 (GLSL mat2(vec4) equivalent)
+// mat2(vec4(a,b,c,d)) creates matrix [a c; b d] (column-major)
+// So vec4 represents: first column (a,b), second column (c,d)
+mat2_from_vec4 :: (v: vec4) -> vec4
+{
+    // Return as [a, b, c, d] for easy access
+    return v;
+}
+
+// Apply 2x2 matrix to vec2
+// m = [a c; b d] (column-major), v = [x; y]
+// result = [a*x + c*y; b*x + d*y]
+mat2_mul :: (m: vec4, v: vec2) -> vec2
+{
+    // m.x = a, m.y = b, m.z = c, m.w = d
+    // Matrix is [a c; b d]
+    // Result = [a*x + c*y; b*x + d*y]
+    return vec2(m.x * v.x + m.z * v.y, m.y * v.x + m.w * v.y);
+}
+
+// Raymarching calculation for a single pixel
+// Uses raymarching to render 3D fractal patterns
+raymarch :: (data: ^Data, global_invocation_id: vec3) -> vec4
+{
+    // C is the pixel coordinate (0 to resolution)
+    C: vec2 = global_invocation_id.xy;
+
+    d: float;
+    z: float = fract(dot(C, sin(C))) - 0.5;
+    o: vec4 = vec4(0.0, 0.0, 0.0, 0.0);
+    p: vec4;
+    r: vec2 = vec2(texture_size(data.output_texture_id));
+    O: vec4;
+
+    // Loop: ++i < 77 means i goes from 1 to 76 (76 iterations)
+    // z += .6*d happens at the end of each iteration
+    for i := 1; i < 77; i += 1
+    {
+        // Convert 2D pixel to 3D ray direction
+        // Note: original uses .1*iTime not .1*i!
+        p = vec4(z * normalize(vec3(C - 0.5 * r, r.y)), 0.1 * data.time);
+
+        // Move through 3D space over time
+        p = vec4(p.x, p.y, p.z + data.time, p.w);
+
+        // Save position for lighting calculations
+        O = p;
+
+        // Apply rotation matrices to create fractal patterns
+        // p.xy *= mat2(cos(...)) means multiply p.xy by the rotation matrix
+        rot1: vec4 = mat2_from_vec4(cos(2.0 + O.z + vec4(0.0, 11.0, 33.0, 0.0)));
+        p_xy: vec2 = mat2_mul(rot1, vec2(p.x, p.y));
+        p = vec4(p_xy.x, p_xy.y, p.z, p.w);
+
+        // This was originally a bug in the matrix calculation
+        // The incorrect transformation created an unexpectedly interesting pattern
+        rot2: vec4 = mat2_from_vec4(cos(O + vec4(0.0, 11.0, 33.0, 0.0)));
+        p_xy = mat2_mul(rot2, vec2(p.x, p.y));
+        p = vec4(p_xy.x, p_xy.y, p.z, p.w);
+
+        // Calculate color based on position and space distortion
+        // The sin() creates a nice looking palette, division by dot() creates falloff
+        numerator: vec4 = 1.0 + sin(0.5 * O.z + length(p - O) + vec4(0.0, 4.0, 3.0, 6.0));
+        denominator: float = 0.5 + 2.0 * dot(O.xy, O.xy);
+        O = numerator / denominator;
+
+        // Domain repetition, repeats the single line and the 2 planes infinitely
+        p = abs(fract(p) - 0.5);
+
+        // Calculate distance to nearest surface
+        // This combines a cylinder (length(p.xy)-.125) with 2 planesbox (min(p.x,p.y))
+        d = abs(min(length(p.xy) - 0.125, min(p.x, p.y) + 0.001)) + 0.001;
+
+        // Add lighting contribution (brighter when closer to surfaces)
+        o += O.w / d * O;
+
+        // Step forward (larger steps when far from surfaces)
+        // This happens in the for loop increment in the original
+        z += 0.6 * d;
+    }
+
+    // tanh() compresses the accumulated brightness to 0-1 range
+    // (Like HDR tone mapping in photography)
+    return tanh(o / 20000.0);
+}
+
+main :: (data: ^Data @data, global_invocation_id: uvec3 @global_invocation_id)
+{
+    res: uvec2 = uvec2(texture_size(data.output_texture_id));
+
+    // Out of bounds check: only execute if thread is within resolution
+    if all(global_invocation_id.xy < res)
+    {
+        color: vec4 = raymarch(data, vec3(global_invocation_id));
+        texture_store(data.output_texture_id, ivec2(global_invocation_id.xy), color);
+    }
+}

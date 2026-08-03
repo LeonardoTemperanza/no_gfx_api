@@ -27,6 +27,8 @@ COMMANDS := []Command {
     { "compiler",  cmd_compiler  },
     { "shaders_nosl", cmd_shaders_nosl },
     { "shaders_slang", cmd_shaders_slang },
+    { "run_compiler_tests", cmd_run_compiler_tests },
+    { "run_no_gfx_tests", cmd_run_no_gfx_tests }
 }
 
 Example :: struct
@@ -42,6 +44,7 @@ EXAMPLES: [dynamic]Example
 cmd_default :: proc() -> bool
 {
     cmd_check_gpu() or_return
+    cmd_check_tests() or_return
     res := true
     res &= cmd_compiler()
     res &= cmd_build_examples_parallel()
@@ -51,6 +54,7 @@ cmd_default :: proc() -> bool
 cmd_build_all_with_slang :: proc() -> bool
 {
     cmd_check_gpu() or_return
+    cmd_check_tests() or_return
     res := true
     res &= cmd_build_examples_parallel(build_shaders_nosl = false, build_shaders_slang = true)
     return res
@@ -135,6 +139,13 @@ cmd_check_gpu :: proc() -> bool
     return res
 }
 
+cmd_check_tests :: proc() -> bool
+{
+    res := true
+    res &= run_task("odin", "check", "tests", "-vet")
+    return res
+}
+
 cmd_compiler :: proc() -> bool
 {
     res := true
@@ -158,8 +169,43 @@ cmd_shaders_slang :: proc() -> bool
     return res
 }
 
+cmd_run_compiler_tests :: proc() -> bool
+{
+    cmd_compiler() or_return
+    res := true
+
+    dir := "tests"
+    shaders_nosl, shaders_slang := get_shaders_in_dir(dir)
+    for shader in shaders_nosl
+    {
+        dir, _ := os.split_path(shader)
+        out_flag := fmt.tprintf("-out:%v/%v.spv",  dir, os.stem(shader))
+        compile_success := run_task(with_exe_ext("./build/gpu_compiler"), shader, out_flag, silent = true)
+        if compile_success {
+            fmt.printfln("%v - Ok.", shader)
+        } else {
+            fmt.printfln("%v - Fail!", shader)
+        }
+        res &= compile_success
+    }
+
+    return res
+}
+
+cmd_run_no_gfx_tests :: proc() -> bool
+{
+    cmd_run_compiler_tests() or_return
+    res := true
+    res &= run_task("odin", "run", "tests")
+    return res
+}
+
 main :: proc()
 {
+    console_logger := log.create_console_logger()
+    // defer log.destroy_console_logger(console_logger)
+    context.logger = console_logger
+
     cmd_args := os.args
     if len(cmd_args) <= 0 do exit_with_error("No arguments found.")
 
@@ -323,9 +369,9 @@ exit_with_error :: proc(fmt: string, args: ..any)
 
 MUTEX: sync.Mutex
 
-run_task :: proc(args: ..string) -> bool
+run_task :: proc(args: ..string, silent := false) -> bool
 {
-    print_cmd(args)
+    if !silent do print_cmd(args)
 
     state, stdout, stderr, err := os.process_exec({ command = args }, allocator = context.temp_allocator)
     if err != nil {

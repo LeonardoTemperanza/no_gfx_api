@@ -1,0 +1,30 @@
+
+Vertex :: struct
+{
+    pos: vec3,
+    color: vec3
+}
+
+Data :: struct
+{
+    verts: []Vertex,
+}
+
+Vert_Output :: struct
+{
+    pos: vec4 @position,
+    color: vec4 @io(0),
+}
+
+vert :: #vertex (vert_id: uint @vert_id, data: ^Data @data) -> Vert_Output
+{
+    out: Vert_Output;
+    out.pos = vec4(data.verts[vert_id].pos, 1.0);
+    out.color = vec4(data.verts[vert_id].color, 1.0);
+    return out;
+}
+
+frag :: #fragment (input: Vert_Output) -> vec4 @io(0)
+{
+    return input.color;
+}

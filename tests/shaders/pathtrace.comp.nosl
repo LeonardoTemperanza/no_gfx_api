@@ -1,0 +1,572 @@
+
+Scene :: struct
+{
+    instances: []Instance,
+    meshes: []Mesh,
+    lights: Lights,
+}
+
+Mesh :: struct
+{
+    pos: []vec3,
+    normal: []vec3,
+    uvs: []vec2,
+    indices: []uint,
+}
+
+Instance :: struct
+{
+    mesh_idx: uint,
+    albedo_tex: texture_id,
+}
+
+Data :: struct
+{
+    output_texture_id: texture_rw_id,
+    tlas: bvh_id,
+    linear_sampler: sampler_id,
+    scene: Scene,
+    resolution: vec2,
+    accum_counter: uint,
+    is_lightmap: bool,  // False for first-person ground truth mode. If true, "camera_to_world" is ignored.
+    camera_to_world: mat4,
+    gbufs_id: texture_rw_id,
+}
+
+Lights :: struct
+{
+    dir_light_dir: vec3,
+    dir_light_angle: float,
+    dir_light_emission: vec3,
+}
+
+main :: (data: ^Data @data, global_invocation_id_3: ivec3 @global_invocation_id)
+{
+    global_invocation_id := global_invocation_id_3.xy;
+    resolution := ivec2(data.resolution);
+    init_rng(uint(global_invocation_id.y * resolution.x + global_invocation_id.x), data.accum_counter);
+
+    color: vec3;
+
+    start_ray: Ray;
+    if data.is_lightmap
+    {
+        if any(global_invocation_id >= resolution) {
+            return;
+        }
+
+        pos_sample    := texture_load(data.gbufs_id + 0, global_invocation_id.xy);
+        normal_sample := texture_load(data.gbufs_id + 1, global_invocation_id.xy);
+        if normal_sample.a < 0.1 {
+            texture_store(data.output_texture_id, global_invocation_id.xy, vec4(0));
+            return;
+        }
+
+        normal := normalize((normal_sample * 2.0 - 1.0).xyz);
+
+        start_ray: Ray;
+        start_ray.ori = pos_sample.xyz + normal * 0.0011;
+        start_ray.dir = -normal;
+        color = clamp_radiance(bake_texel(pos_sample.xyz, normal, data.scene, data.tlas, data.linear_sampler));
+    }
+    else
+    {
+        uv := vec2(global_invocation_id.xy) / vec2(resolution);
+        coord := 2.0 * uv - 1.0;
+        coord.y *= -1.0;
+
+        coord = coord * tan((90.0 * pi / 180.0) / 2.0);
+        coord.y = coord.y * data.resolution.y / data.resolution.x;
+
+        world_camera_pos := (data.camera_to_world * vec4(0, 0, 0, 1)).xyz;
+        camera_lookat := normalize(vec3(coord, 1));
+        world_camera_lookat := normalize(data.camera_to_world * vec4(camera_lookat, 0.0)).xyz;
+
+        start_ray.ori = world_camera_pos;
+        start_ray.dir = world_camera_lookat;
+        color = clamp_radiance(pathtrace(start_ray, data.scene, data.tlas, data.linear_sampler));
+    }
+
+    if all(global_invocation_id < resolution)
+    {
+        if data.accum_counter > 1
+        {
+            weight := 1.0 / float(data.accum_counter);
+            prev_color := texture_load(data.output_texture_id, global_invocation_id.xy).xyz;
+            color = prev_color * (1 - weight) + color * weight;
+            color = max(color, vec3(0, 0, 0));
+        }
+
+        texture_store(data.output_texture_id, global_invocation_id.xy, vec4(color, 1));
+    }
+}
+
+bake_texel :: (world_pos: vec3, world_normal: vec3, scene: Scene, tlas: bvh_id, sampler: sampler_id) -> vec3
+{
+    N := 1;
+    accum := vec3(0, 0, 0);
+    origin := world_pos;
+
+    for i := 0; i < N; i += 1
+    {
+        light_prob := 0.5;
+        bsdf_prob  := 0.5;
+
+        incoming: vec3;
+        if random_f32() < bsdf_prob
+        {
+            incoming = sample_matte(world_normal, random_vec2());
+        }
+        else
+        {
+            incoming = sample_lights(scene.lights, origin, world_normal, world_normal);
+        }
+        if all(incoming == vec3(0)) { continue; }
+
+        prob := bsdf_prob  * sample_matte_pdf(world_normal, incoming) +
+                light_prob * sample_lights_pdf(scene.lights, origin, incoming);
+
+        cos_term := max(0.0, dot(world_normal, incoming));
+        mis_weight := cos_term / prob;
+
+        ray: Ray;
+        ray.ori = origin;
+        ray.dir = incoming;
+        accum += pathtrace(ray, scene, tlas, sampler) * mis_weight;
+    }
+
+    return accum / float(N);
+}
+
+pathtrace :: (start_ray: Ray, scene: Scene, tlas: bvh_id, sampler: sampler_id) -> vec3
+{
+    radiance := vec3(0, 0, 0);
+    weight := vec3(1, 1, 1);
+    ray := start_ray;
+
+    max_bounces := 5;
+    for bounce := 0; bounce <= max_bounces; bounce = bounce + 1
+    {
+        hit := ray_skip_alpha_stochastically(ray, scene, tlas);
+        if !hit.hit
+        {
+            emission := sample_sky_emission(ray.dir, scene);
+            radiance += emission * weight;
+            break;
+        }
+
+        hit_pos := ray.ori + ray.dir * hit.t;
+
+        mat_point := get_material_point(scene, hit);
+
+        // Accumulate emission.
+        // radiance = radiance + weight * /* ... */;
+
+        outgoing := -ray.dir;
+
+        // Compute next direction.
+        incoming: vec3;
+        {
+            light_prob := 0.5;
+            bsdf_prob := 0.5;
+            if random_f32() < bsdf_prob
+            {
+                rnd0 := random_f32();
+                rnd1 := random_vec2();
+                incoming = sample_matte(hit.normal, rnd1);
+            }
+            else
+            {
+                incoming = sample_lights(scene.lights, hit_pos, hit.normal, outgoing);
+            }
+
+            if all(incoming == vec3(0)) { break; }
+
+            prob := bsdf_prob * sample_matte_pdf(hit.normal, incoming) +
+                    light_prob * sample_lights_pdf(scene.lights, hit_pos, incoming);
+            weight *= eval_matte(mat_point.color, hit.normal, incoming) / prob;
+        }
+
+        // Update ray.
+        ray.ori = hit_pos;
+        ray.dir = incoming;
+
+        // Check weight.
+        if all(weight == vec3(0)) || !is_finite(weight) { break; }
+
+        // Russian roulette.
+        if(bounce > 3)
+        {
+            survive_prob := min(0.99, max(weight.x, max(weight.y, weight.z)));
+            if random_f32() >= survive_prob { break; }
+            weight = weight / survive_prob;
+        }
+    }
+
+    return radiance;
+}
+
+Ray :: struct
+{
+    ori: vec3,
+    dir: vec3,
+}
+
+Hit_Info :: struct
+{
+    hit: bool,
+    t: float,
+    normal: vec3,
+    mesh_idx: uint,
+    instance_idx: uint,
+    tri_idx: uint,
+    uv: vec2,
+}
+
+ray_scene_intersection :: (ray: Ray, scene: Scene, tlas: bvh_id) -> Hit_Info
+{
+    // @tmp: These constants will be implicit (They may even be an enum)
+    Ray_Flags_Opaque: uint = 1;
+    Ray_Flags_Terminate_On_First_Hit: uint = 4;  // For occlusion checking (shadow rays)
+    Ray_Flags_Skip_Closest_Hit_Shader: uint = 8;
+    Ray_Result_Kind_Miss: uint = 0;
+    Ray_Result_Kind_Hit_Mesh: uint = 1;
+    Ray_Result_Kind_Hit_AABB: uint = 2;
+
+    hit_info: Hit_Info;
+
+    desc: Ray_Desc;
+    desc.flags = Ray_Flags_Opaque;
+    desc.cull_mask = 0xFF;
+    desc.t_min = 0.001;
+    desc.t_max = 1000000000.0;
+    desc.origin = ray.ori;
+    desc.dir = ray.dir;
+    rq := rayquery_init(desc, tlas);
+
+    rayquery_proceed(rq);
+
+    // For scenes which may contain non-opaque geometry:
+    /*
+    for ; rayquery_proceed(rq);
+    {
+        rayquery_accept(rq);
+    }
+    */
+
+    hit := rayquery_result(rq);
+
+    if hit.kind != Ray_Result_Kind_Hit_Mesh {
+        hit_info.hit = false;
+        return hit_info;
+    }
+
+    instance := scene.instances[hit.instance_idx];
+    mesh := scene.meshes[instance.mesh_idx];
+    indices := mesh.indices;
+    base_idx := hit.primitive_idx * 3;
+
+    w := 1.0 - hit.barycentrics.x - hit.barycentrics.y;
+    n0 := mesh.normal[indices[base_idx+0]];
+    n1 := mesh.normal[indices[base_idx+1]];
+    n2 := mesh.normal[indices[base_idx+2]];
+    normal := normalize(n0 * w + n1 * hit.barycentrics.x + n2 * hit.barycentrics.y);
+    if hit.front_face { normal *= -1.0; }
+    world_normal := normalize(transpose(hit.world_to_object) * normal.xyz);
+
+    bary := hit.barycentrics;
+    hit_info.hit = true;
+    hit_info.t = hit.t;
+    hit_info.normal = world_normal.xyz;
+    hit_info.mesh_idx = instance.mesh_idx;
+    hit_info.instance_idx = hit.instance_idx;
+    hit_info.tri_idx = hit.primitive_idx;
+    hit_info.uv = hit.barycentrics;
+    return hit_info;
+}
+
+ray_skip_alpha_stochastically :: (start_ray: Ray, scene: Scene, tlas: bvh_id) -> Hit_Info
+{
+    hit: Hit_Info;
+    ray := start_ray;
+    t := 0.0;
+    max_opacity_bounces := 100;
+    for opacity_bounce := 0; opacity_bounce < max_opacity_bounces; opacity_bounce += 1
+    {
+        hit = ray_scene_intersection(ray, scene, tlas);
+        if !hit.hit { break; }
+
+        t += hit.t;
+
+        alpha := get_alpha(scene, hit);
+        if alpha < 1 && random_f32() >= alpha {
+            ray.ori = ray.ori + ray.dir * hit.t;
+        } else {
+            break;
+        }
+    }
+
+    // Make sure the distance is accurate to the initial
+    // ray, not the last (shorter) one.
+    hit.t = t;
+    return hit;
+}
+
+get_alpha :: (scene: Scene, hit: Hit_Info) -> float
+{
+    // Sample textures.
+    color_sample := vec4(1);
+    // TODO: If it has uvs...
+    if true
+    {
+        instance := scene.instances[hit.instance_idx];
+        mesh := scene.meshes[hit.mesh_idx];
+        indices := mesh.indices;
+        base_idx := hit.tri_idx * 3;
+        uv0 := mesh.uvs[indices[base_idx + 0]];
+        uv1 := mesh.uvs[indices[base_idx + 1]];
+        uv2 := mesh.uvs[indices[base_idx + 2]];
+        w := 1.0 - hit.uv.x - hit.uv.y;
+        texcoords := uv0*w + uv1*hit.uv.x + uv2*hit.uv.y;
+
+        // If it has a color texture...
+        if true
+        {
+            color_sample = texture_sample(instance.albedo_tex, 0, texcoords);
+        }
+    }
+
+    alpha := color_sample.a;
+    return alpha;
+}
+
+// RNG
+
+pi: float = 3.14159265359;
+
+RNG_STATE: uint;
+
+hash_u32 :: (seed: uint) -> uint
+{
+    x := seed;
+    x = x ~ (x >> 17);
+    x = x * 0xed5ad4bb;
+    x = x ~ (x >> 11);
+    x = x * 0xac4c1b51;
+    x = x ~ (x >> 15);
+    x = x * 0x31848bab;
+    x = x ~ (x >> 14);
+    return x;
+}
+
+init_rng :: (global_id: uint, accum_counter: uint)
+{
+    seed: uint = 0;
+    RNG_STATE = hash_u32((global_id * 19349663) ~ (accum_counter * 83492791));
+}
+
+// PCG Random number generator.
+// From: www.pcg-random.org and www.shadertoy.com/view/XlGcRh
+random_u32 :: () -> uint
+{
+    RNG_STATE = RNG_STATE * 747796405 + 2891336453;
+    result := ((RNG_STATE >> ((RNG_STATE >> 28) + 4)) ~ RNG_STATE) * 277803737;
+    result = (result >> 22) ~ result;
+    return result;
+}
+
+// From 0 (inclusive) to 1 (exclusive)
+random_f32 :: () -> float
+{
+    RNG_STATE = RNG_STATE * 747796405 + 2891336453;
+    result := ((RNG_STATE >> ((RNG_STATE >> 28) + 4)) ~ RNG_STATE) * 277803737;
+    result = (result >> 22) ~ result;
+    return float(result) / 4294967295.0;
+}
+
+random_vec2 :: () -> vec2
+{
+    // Enforce evaluation order.
+    rnd0 := random_f32();
+    rnd1 := random_f32();
+    return vec2(rnd0, rnd1);
+}
+
+copysignf :: (mag: float, sgn: float) -> float
+{
+    return mag if sgn > 0 else -mag;
+}
+
+basis_fromz :: (v: vec3) -> mat4
+{
+    // https://graphics.pixar.com/library/OrthonormalB/paper.pdf
+    z := normalize(v);
+    sign := copysignf(1.0, z.z);
+    a := -1.0 / (sign + z.z);
+    b := z.x * z.y * a;
+    x := vec3(1.0 + sign * z.x * z.x * a, sign * b, -sign * z.x);
+    y := vec3(b, sign + z.y * z.y * a, -z.y);
+    return mat4(vec4(x, 0), vec4(y, 0), vec4(z, 0), vec4(0, 0, 0, 0));
+}
+
+sample_hemisphere_cos :: (normal: vec3, ruv: vec2) -> vec3
+{
+    z   := sqrt(ruv.y);
+    r   := sqrt(1 - z * z);
+    phi := 2 * pi * ruv.x;
+    local_direction := vec3(r * cos(phi), r * sin(phi), z);
+    return normalize(basis_fromz(normal) * vec4(local_direction, 0)).xyz;
+}
+
+sample_hemisphere_cos_pdf :: (normal: vec3, direction: vec3) -> float
+{
+    cosw := dot(normal, direction);
+    if cosw <= 0 {
+        return 0;
+    } else {
+        return cosw / pi;
+    }
+}
+
+// Materials
+Material_Point :: struct
+{
+    color: vec3,
+}
+
+get_material_point :: (scene: Scene, hit: Hit_Info) -> Material_Point
+{
+    // Sample textures.
+    color_sample := vec4(1);
+
+    // TODO: If it has uvs...
+    if true
+    {
+        instance := scene.instances[hit.instance_idx];
+        mesh := scene.meshes[hit.mesh_idx];
+        indices := mesh.indices;
+        base_idx := hit.tri_idx * 3;
+        uv0 := mesh.uvs[indices[base_idx + 0]];
+        uv1 := mesh.uvs[indices[base_idx + 1]];
+        uv2 := mesh.uvs[indices[base_idx + 2]];
+        w := 1.0 - hit.uv.x - hit.uv.y;
+        texcoords := uv0*w + uv1*hit.uv.x + uv2*hit.uv.y;
+
+        // If it has a color texture...
+        if true
+        {
+            color_sample = texture_sample(instance.albedo_tex, 0, texcoords);
+        }
+    }
+
+    mat_point: Material_Point;
+    mat_point.color = color_sample.rgb;
+    return mat_point;
+}
+
+// BSDF sampling
+
+sample_matte :: (normal: vec3, rn: vec2) -> vec3
+{
+    return sample_hemisphere_cos(normal, rn);
+}
+
+eval_matte :: (color: vec3, normal: vec3, incoming: vec3) -> vec3
+{
+    return color / pi * abs(dot(normal, incoming));
+}
+
+sample_matte_pdf :: (normal: vec3, incoming: vec3) -> float
+{
+    return sample_hemisphere_cos_pdf(normal, incoming);
+}
+
+is_finite :: (v: vec3) -> bool
+{
+    is_x_finite := (float_bits_to_int(v.x) & 0x7F800000) != 0x7F800000;
+    is_y_finite := (float_bits_to_int(v.y) & 0x7F800000) != 0x7F800000;
+    is_z_finite := (float_bits_to_int(v.z) & 0x7F800000) != 0x7F800000;
+    return is_x_finite && is_y_finite && is_z_finite;
+}
+
+// Light sampling
+
+sun_disk_falloff :: (ray_dir: vec3, sun_dir: vec3, angular_radius: float) -> float
+{
+    cos_theta := dot(ray_dir, sun_dir);
+    cos_inner := cos(angular_radius);
+    cos_outer := cos(angular_radius * 1.5);
+    return smoothstep(cos_outer, cos_inner, cos_theta);
+}
+
+sample_sun_direction :: (sun_dir: vec3, angular_radius: float, u: vec2) -> vec3
+{
+    cos_theta_max := cos(angular_radius);
+    cos_theta := mix(1.0, cos_theta_max, u.x);
+    sin_theta := sqrt(1.0 - cos_theta * cos_theta);
+    phi := 2.0 * pi * u.y;
+
+    t: vec3; b: vec3;
+    if abs(sun_dir.z) < 0.999 {
+        t = normalize(cross(sun_dir, vec3(0.0, 0.0, 1.0)));
+    } else {
+        t = normalize(cross(sun_dir, vec3(0.0, 1.0, 0.0)));
+    }
+    b = cross(sun_dir, t);
+
+    return t * (cos(phi) * sin_theta) +
+           b * (sin(phi) * sin_theta) +
+           sun_dir * cos_theta;
+}
+
+eval_sun_pdf :: (dir: vec3, sun_dir: vec3, angular_radius: float) -> float
+{
+    cos_theta := dot(dir, sun_dir);
+    cos_max   := cos(angular_radius);
+
+    // If the direction falls outside the sun cone, the light
+    // would never have sampled it, thus PDF = 0.
+    if cos_theta < cos_max {
+        return 0;
+    }
+
+    // Otherwise constant over the disk.
+    solid_angle := 2 * pi * (1 - cos_max);
+    return 1 / solid_angle;
+}
+
+sample_lights :: (lights: Lights, pos: vec3, normal: vec3, outgoing: vec3) -> vec3
+{
+    light_dir := sample_sun_direction(-lights.dir_light_dir, lights.dir_light_angle, random_vec2());
+    if dot(light_dir, normal) < 0 { return vec3(0); }
+    return light_dir;
+}
+
+sample_lights_pdf :: (lights: Lights, pos: vec3, incoming: vec3) -> float
+{
+    return eval_sun_pdf(incoming, -lights.dir_light_dir, lights.dir_light_angle);
+}
+
+sample_sky_emission :: (dir: vec3, scene: Scene) -> vec3
+{
+    // Sun
+    emission := sun_disk_falloff(dir, -scene.lights.dir_light_dir, scene.lights.dir_light_angle) * scene.lights.dir_light_emission;
+
+    // Sky
+    emission += vec3(0.67, 0.76, 1.00);
+    return emission;
+}
+
+// Hack to guard from floating point imprecision. Kind of necessary
+// when doing any form of MIS.
+clamp_radiance :: (radiance: vec3) -> vec3
+{
+    res := radiance;
+    if !is_finite(res) { res = vec3(0.0); }
+
+    max_radiance := 100.0;
+    if res.x > max_radiance || res.y > max_radiance || res.z > max_radiance {
+        res *= max_radiance / max(res.x, max(res.y, res.z));
+    }
+    return res;
+}

@@ -1,0 +1,49 @@
+
+Vertex :: struct
+{
+    pos: vec3,
+}
+
+Data :: struct
+{
+    verts: []Vertex,
+}
+
+// IndirectData extends Draw_Indexed_Indirect_Command with user data fields
+// The struct layout matches the Odin struct that uses `using cmd: gpu.Draw_Indexed_Indirect_Command`
+IndirectData :: struct
+{
+    index_count: uint,
+    instance_count: uint,
+    first_index: uint,
+    vertex_offset: int,
+    first_instance: uint,
+    color: vec3,
+    pos: vec3,
+    size: float,
+}
+
+Vert_Output :: struct
+{
+    pos: vec4 @position,
+    color: vec4 @io(0),
+}
+
+vert :: #vertex (vert_id: uint @vert_id, data: ^Data @data, indirect_data: ^IndirectData @indirect_data) -> Vert_Output
+{
+    out: Vert_Output;
+
+    // vertices are shared between all draws so we use `data` to access them
+    // Scale vertices by size and translate by position
+    out.pos = vec4(data.verts[vert_id].pos * indirect_data.size + indirect_data.pos, 1.0);
+
+    // color is per-draw so we use `indirect_data` to access it
+    out.color = vec4(indirect_data.color, 1.0);
+
+    return out;
+}
+
+frag :: #fragment (input: Vert_Output) -> vec4 @io(0)
+{
+    return input.color;
+}
