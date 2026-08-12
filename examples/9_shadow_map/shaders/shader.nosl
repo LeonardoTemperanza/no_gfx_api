@@ -1,0 +1,68 @@
+
+Data :: struct
+{
+    positions: []vec4,
+    normals: []vec4,
+    model_to_world: mat4,
+    model_to_world_normal: mat4,
+    world_to_view: mat4,
+    world_to_light: mat4,
+    view_to_proj: mat4,
+}
+
+Vert_Output :: struct
+{
+    pos: vec4 @position,
+    light_pos: vec4 @io(0),
+    world_normal: vec4 @io(1),
+}
+
+vert :: #vertex (vert_id: uint @vert_id, data: ^Data @data) -> Vert_Output
+{
+    model_pos := vec4(data.positions[vert_id].xyz, 1.0);
+    world_pos := data.model_to_world * model_pos;
+    light_pos := data.world_to_light * world_pos;
+    light_pos.y = -light_pos.y;
+    view_pos := data.world_to_view * world_pos;
+    clip_pos := data.view_to_proj * view_pos;
+    clip_pos.y = 0.0 - clip_pos.y;
+
+    world_normal := data.model_to_world_normal * data.normals[vert_id];
+
+    out: Vert_Output;
+    out.pos = clip_pos;
+    out.world_normal = world_normal;
+    out.light_pos = light_pos;
+    return out;
+}
+
+
+Frag_Data :: struct
+{
+    shadow_texture: texture_id,
+    shadow_sampler: sampler_id,
+    light_dir: vec3,
+}
+
+frag :: #fragment (input: Vert_Output, data: ^Frag_Data @data) -> vec4 @io(0)
+{
+    light_pos := input.light_pos.xyz / input.light_pos.w;
+    world_normal_vert := input.world_normal;
+    normal := normalize(world_normal_vert.xyz);
+    factor := dot(normal, normalize(data.light_dir));
+    
+    light_pos.xy = light_pos.xy*0.5+0.5;
+    light_pos.z -= 0.001;
+    light := texture_sample_cmp(data.shadow_texture, data.shadow_sampler, light_pos).x;
+    if (light_pos.x < 0 || light_pos.y < 0 || light_pos.x > 1 || light_pos.y > 1 || light_pos.z < 0.0)
+    {
+        light = 0.0;
+    }
+    light = max(light, 0.5);
+    return vec4(vec3(factor * light), 1.0);
+}
+
+shadow_frag :: #fragment (input: Vert_Output) -> vec4 @io(0)
+{
+    return vec4(1.0,1.0,1.0,1.0);
+}

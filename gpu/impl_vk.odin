@@ -1591,6 +1591,8 @@ _sampler_descriptor :: proc(sampler_desc: Sampler_Desc, loc := #caller_location)
         maxLod = sampler_desc.max_lod if sampler_desc.max_lod != 0.0 else vk.LOD_CLAMP_NONE,
         anisotropyEnable = b32(sampler_desc.max_anisotropy > 1.0),
         maxAnisotropy = sampler_desc.max_anisotropy,
+        compareOp = vk.CompareOp(sampler_desc.compare_op),
+        compareEnable = sampler_desc.compare_op != .Never
     }
     sampler := get_or_add_sampler(sampler_ci)
 
@@ -2746,13 +2748,28 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc, 
         vk_depth_attachment_ptr = &vk_depth_attachment
     }
 
+    // Any attachment is optional but one needs to be provided...probably?
+    // Either way getting dimentions from the texture might not always be a safe assumption?
+    // Might be better to always have the user specify the render dimentions
     width := desc.render_area_size.x
     if width == {} {
-        width = desc.color_attachments[0].texture.dimensions.x
+        if (len(desc.color_attachments) != 0) {
+            width = desc.color_attachments[0].texture.dimensions.x
+        } else if (desc.depth_attachment != nil) {
+            width = desc.depth_attachment.?.texture.dimensions.x
+        } else if (desc.stencil_attachment != nil) {
+            width = desc.stencil_attachment.?.texture.dimensions.x
+        }
     }
     height := desc.render_area_size.y
     if height == {} {
-        height = desc.color_attachments[0].texture.dimensions.y
+        if (len(desc.color_attachments) != 0) {
+            height = desc.color_attachments[0].texture.dimensions.y
+        } else if (desc.depth_attachment != nil) {
+            height = desc.depth_attachment.?.texture.dimensions.y
+        } else if (desc.stencil_attachment != nil) {
+            height = desc.stencil_attachment.?.texture.dimensions.y
+        }
     }
     layer_count := desc.layer_count
     if layer_count == 0 {
