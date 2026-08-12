@@ -799,9 +799,11 @@ add_intrinsics :: proc()
 {
     // Resource access
     add_intrinsic("texture_sample", { &TEXTURE_ID_TYPE, &SAMPLER_ID_TYPE, &VEC2_TYPE }, { "tex_idx", "sampler_idx", "uv" }, &VEC4_TYPE)
-    add_intrinsic("texture_sample_shadow", { &TEXTURE_ID_TYPE, &SAMPLER_ID_TYPE, &VEC3_TYPE }, { "tex_idx", "sampler_idx", "uvw" }, &VEC4_TYPE)
+    add_intrinsic("texture_sample_compare", { &TEXTURE_ID_TYPE, &SAMPLER_ID_TYPE, &VEC3_TYPE }, { "tex_idx", "sampler_idx", "uvw" }, &FLOAT_TYPE)
     add_intrinsic("texture_sample_cube", { &TEXTURE_ID_TYPE, &SAMPLER_ID_TYPE, &VEC3_TYPE }, { "tex_idx", "sampler_idx", "direction" }, &VEC4_TYPE)
+    add_intrinsic("texture_sample_cube_compare", { &TEXTURE_ID_TYPE, &SAMPLER_ID_TYPE, &VEC4_TYPE }, { "tex_idx", "sampler_idx", "uvwd" }, &FLOAT_TYPE)
     add_intrinsic("texture_sample_array", { &TEXTURE_ID_TYPE, &SAMPLER_ID_TYPE, &VEC3_TYPE }, { "tex_idx", "sampler_idx", "uvw" }, &VEC4_TYPE)
+    add_intrinsic("texture_sample_array_compare", { &TEXTURE_ID_TYPE, &SAMPLER_ID_TYPE, &VEC4_TYPE }, { "tex_idx", "sampler_idx", "uvwd" }, &FLOAT_TYPE)
     add_intrinsic("texture_sample_cube_array", { &TEXTURE_ID_TYPE, &SAMPLER_ID_TYPE, &VEC4_TYPE }, { "tex_idx", "sampler_idx", "direction_layer" }, &VEC4_TYPE);
     add_intrinsic("texture_sample_3d", { &TEXTURE_ID_TYPE, &SAMPLER_ID_TYPE, &VEC3_TYPE }, { "tex_idx", "sampler_idx", "uvw" }, &VEC4_TYPE);
     add_intrinsic("texture_store", { &TEXTURE_RW_ID_TYPE, &IVEC2_TYPE, &VEC4_TYPE }, { "tex_idx", "coord", "value" }, nil)

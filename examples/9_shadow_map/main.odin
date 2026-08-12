@@ -166,7 +166,7 @@ main :: proc()
         world_to_view := shared.first_person_camera_view(delta_time)
         aspect_ratio := f32(window_size_x) / f32(window_size_y)
         view_to_proj := linalg.matrix4_perspective_f32(math.RAD_PER_DEG * 59.0, aspect_ratio, 0.1, 1000.0, false)
-        light_to_proj := linalg.matrix_ortho3d_f32(-18,18, 18,-18, -30, 7, false)
+        light_to_proj := linalg.matrix_ortho3d_f32(-25,25, 18,-18, -40, 9, false)
         
         cmd_buf := gpu.commands_begin(.Main)
         // ShadowPass

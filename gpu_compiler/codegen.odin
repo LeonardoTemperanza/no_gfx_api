@@ -1399,9 +1399,11 @@ Intrinsics_Code :: `
 // Intrinsics:
 
 #define texture_sample(t, s, uvw)                  texture(sampler2D(_res_textures_[nonuniformEXT(t)], _res_samplers_[nonuniformEXT(s)]), uvw)
-#define texture_sample_cmp(t, s, uvw)              texture(sampler2DShadow(_res_textures_[nonuniformEXT(t)], _res_samplers_[nonuniformEXT(s)]), uvw)
+#define texture_sample_compare(t, s, uvw)          texture(sampler2DShadow(_res_textures_[nonuniformEXT(t)], _res_samplers_[nonuniformEXT(s)]), uvw)
 #define texture_sample_cube(t, s, dir)             texture(samplerCube(_res_textures_cube_[nonuniformEXT(t)], _res_samplers_[nonuniformEXT(s)]), dir)
+#define texture_sample_cube_compare(t, s, uvwd)    texture(samplerCubeShadow(_res_textures_[nonuniformEXT(t)], _res_samplers_[nonuniformEXT(s)]), uvwd)
 #define texture_sample_array(t, s, uvw)            texture(sampler2DArray(_res_textures_2darray_[nonuniformEXT(t)], _res_samplers_[nonuniformEXT(s)]), uvw)
+#define texture_sample_array_compare(t, s, uvwd)   texture(sampler2DArrayShadow(_res_textures_[nonuniformEXT(t)], _res_samplers_[nonuniformEXT(s)]), uvwd)
 #define texture_sample_cube_array(t, s, dir_layer) texture(samplerCubeArray(_res_textures_cubearray_[nonuniformEXT(t)], _res_samplers_[nonuniformEXT(s)]), dir_layer)
 #define texture_sample_3d(t, s, uvw)               texture(sampler3D(_res_textures_3d_[nonuniformEXT(t)], _res_samplers_[nonuniformEXT(s)]), uvw)
 #define texture_load(t, coord)                     imageLoad(_res_textures_rw_[nonuniformEXT(t)], coord)

@@ -24,6 +24,7 @@ module shared;
 [[vk::binding(0, RWTEXTURE_HEAP_BINDING)]] public RWTexture1DArray<float4> texture1DArrayHeapRW[];
 
 [[vk::binding(0, SAMPLER_HEAP_BINDING)]] public SamplerState samplerHeap[];
+[[vk::binding(0, SAMPLER_HEAP_BINDING)]] public SamplerComparisonState compareSamplerHeap[];
 [[vk::binding(0, BVH_HEAP_BINDING)]] RaytracingAccelerationStructure bvhHeap[];
 
 // Push constant blocks - different structures for graphics vs compute shaders
@@ -98,6 +99,11 @@ public struct ComputePipelineData<TData = void> {
 public SamplerState getSampler(uint samplerIndex) 
 {
     return samplerHeap[NonUniformResourceIndex(samplerIndex)];
+}
+
+public SamplerComparisonState getCompareSampler(uint samplerIndex)
+{
+    return compareSamplerHeap[NonUniformResourceIndex(samplerIndex)];
 }
 
 public Texture2D getTexture2D(uint textureIndex)
