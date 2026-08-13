@@ -2716,6 +2716,7 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc, 
         ok := true
         ok &= pool_check(&ctx.command_buffers, cmd_buf, "cmd_buf", loc)
         ok &= check_cmd_buf_must_be_graphics(cmd_buf, "cmd_buf", loc)
+        // TODO: Attachments checks
         if !ok do return
     }
 
@@ -2748,10 +2749,10 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc, 
         vk_depth_attachment_ptr = &vk_depth_attachment
     }
 
-    // Any attachment is optional but one needs to be provided...probably?
-    // Either way getting dimentions from the texture might not always be a safe assumption?
-    // Might be better to always have the user specify the render dimentions
-    width := desc.render_area_size.x
+    // TODO: Vulkan technically allows render passes with no attachments (the shaders
+    // can have side-effects). Requires further testing and validation checks should
+    // be added accordingly.
+    width, height := desc.render_area_size.x, desc.render_area_size.y
     if width == {} {
         if (len(desc.color_attachments) != 0) {
             width = desc.color_attachments[0].texture.dimensions.x
@@ -2761,7 +2762,6 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc, 
             width = desc.stencil_attachment.?.texture.dimensions.x
         }
     }
-    height := desc.render_area_size.y
     if height == {} {
         if (len(desc.color_attachments) != 0) {
             height = desc.color_attachments[0].texture.dimensions.y

@@ -153,7 +153,7 @@ Sampler_Desc :: struct
     min_lod: f32,
     max_lod: f32,  // 0.0 = use all lods
     max_anisotropy: f32,
-    compare_op: Compare_Op,
+    compare_op: Compare_Op,  // Used for comparison/shadow sampling
 }
 
 Texture_View_Desc :: struct
