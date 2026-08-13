@@ -52,7 +52,7 @@ frag :: #fragment (input: Vert_Output, data: ^Frag_Data @data) -> vec4 @io(0)
     normal := normalize(world_normal_vert.xyz);
     factor := dot(normal, normalize(data.light_dir));
     factor = max(0, factor);
-    
+
     light_pos.xy = light_pos.xy*0.5+0.5;
 
     // This is the important line: Shadow maps are sampled with texture_sample_compare to use PCF

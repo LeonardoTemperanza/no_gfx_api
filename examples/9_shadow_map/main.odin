@@ -70,7 +70,7 @@ main :: proc()
     }
     shadow_depth_texture := gpu.texture_alloc_and_create(shadow_depth_desc)
     defer gpu.texture_free_and_destroy(&shadow_depth_texture)
-    
+
     desc_pool := gpu.desc_pool_create()
     defer gpu.desc_pool_destroy(&desc_pool)
 
@@ -167,7 +167,7 @@ main :: proc()
         aspect_ratio := f32(window_size_x) / f32(window_size_y)
         view_to_proj := linalg.matrix4_perspective_f32(math.RAD_PER_DEG * 59.0, aspect_ratio, 0.1, 1000.0, false)
         light_to_proj := linalg.matrix_ortho3d_f32(-25,25, 18,-18, -40, 9, false)
-        
+
         cmd_buf := gpu.commands_begin(.Main)
         // ShadowPass
         {
@@ -178,7 +178,7 @@ main :: proc()
                 },
             })
             gpu.cmd_set_shaders(cmd_buf, vert_shader, shadow_frag_shader)
-
+            gpu.cmd_set_desc_heap(cmd_buf, desc_pool)
             gpu.cmd_set_depth_state(cmd_buf, { mode = { .Read, .Write }, compare = .Less })
 
             for instance in scene.instances
@@ -248,7 +248,7 @@ main :: proc()
                     world_to_light = intr.matrix_flatten(light_to_proj * world_to_light),
                     view_to_proj = intr.matrix_flatten(view_to_proj),
                 }
-                
+
                 Frag_Data :: struct {
                     shadow_map: u32,
                     shadow_sampler: u32,
