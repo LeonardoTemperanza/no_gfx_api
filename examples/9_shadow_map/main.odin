@@ -16,7 +16,7 @@ import gltf2 "../shared/gltf2"
 Start_Window_Size_X :: 1000
 Start_Window_Size_Y :: 1000
 Frames_In_Flight :: 3
-Example_Name :: "3D"
+Example_Name :: "Shadow"
 
 Sponza_Scene :: #load("../shared/assets/sponza.glb")
 
@@ -259,7 +259,7 @@ main :: proc()
                 frag_data.cpu^ = {
                     shadow_map = shadow_tex_id,
                     shadow_sampler = shadow_sampler,
-                    light_dir = (world_to_light * base_light_dir).xyz,
+                    light_dir = (linalg.transpose(linalg.inverse(world_to_light)) * base_light_dir).xyz,
                 }
 
                 gpu.cmd_draw_indexed(cmd_buf, verts_data, frag_data, mesh.indices)

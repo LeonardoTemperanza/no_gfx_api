@@ -34,6 +34,8 @@ VertexOutput vertexMain(uint vert_id : SV_VertexID, GraphicsPipelineData<VertexD
 
     VertexOutput vert_out;
     vert_out.pos = clip_pos;
+    // Seems like the normals from sponza are backwards in the z axis compared to our coords
+    world_normal.z = -world_normal.z;
     vert_out.color = world_normal;
     vert_out.light_pos = light_pos;
     return vert_out;
@@ -54,7 +56,6 @@ float4 fragmentMain(float4 normal_vert: TEXCOORD0, float4 input_light_pos: TEXCO
     factor = max(0, factor);
 
     light_pos.xy = light_pos.xy * 0.5 + 0.5;
-    light_pos.z -= 0.0000005;
     
     // This is the important line: Shadow maps are sampled with getCompareSampler to use PCF
     float light = getTexture2D(data.frag.shadow_texture).SampleCmp(getCompareSampler(data.frag.shadow_sampler), light_pos.xy, light_pos.z);
@@ -63,7 +64,7 @@ float4 fragmentMain(float4 normal_vert: TEXCOORD0, float4 input_light_pos: TEXCO
         light = 0.0;
     }
     light = max(light, 0.2);
-    float3 sun_colour = float3(0.9, 0.8, 0.7);
+    float3 sun_colour = float3(1.3, 1.2, 1.0);
     float3 ambient_colour = float3(0.5, 0.7, 0.9);
     return float4(
         (0.1 + factor * 0.1) * ambient_colour
