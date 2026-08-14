@@ -1591,6 +1591,8 @@ _sampler_descriptor :: proc(sampler_desc: Sampler_Desc, loc := #caller_location)
         maxLod = sampler_desc.max_lod if sampler_desc.max_lod != 0.0 else vk.LOD_CLAMP_NONE,
         anisotropyEnable = b32(sampler_desc.max_anisotropy > 1.0),
         maxAnisotropy = sampler_desc.max_anisotropy,
+        compareOp = vk.CompareOp(sampler_desc.compare_op),
+        compareEnable = sampler_desc.compare_op != .Never
     }
     sampler := get_or_add_sampler(sampler_ci)
 
@@ -2714,6 +2716,7 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc, 
         ok := true
         ok &= pool_check(&ctx.command_buffers, cmd_buf, "cmd_buf", loc)
         ok &= check_cmd_buf_must_be_graphics(cmd_buf, "cmd_buf", loc)
+        // TODO: Attachments checks
         if !ok do return
     }
 
@@ -2746,14 +2749,22 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc, 
         vk_depth_attachment_ptr = &vk_depth_attachment
     }
 
-    width := desc.render_area_size.x
-    if width == {} {
-        width = desc.color_attachments[0].texture.dimensions.x
+    // TODO: Vulkan technically allows render passes with no attachments (the shaders
+    // can have side-effects). Requires further testing and validation checks should
+    // be added accordingly.
+    first_valid_attachment: Render_Attachment
+    if len(desc.color_attachments) > 0 {
+        first_valid_attachment = desc.color_attachments[0]
+    } else if desc.depth_attachment != nil {
+        first_valid_attachment = desc.depth_attachment
+    } else if desc.stencil_attachment != nil {
+        first_valid_attachment = desc.stencil_attachment
     }
-    height := desc.render_area_size.y
-    if height == {} {
-        height = desc.color_attachments[0].texture.dimensions.y
-    }
+
+    width, height := desc.render_area_size.x, desc.render_area_size.y
+    if width == {}  do width  = first_valid_attachment.texture.dimensions.x
+    if height == {} do height = first_valid_attachment.texture.dimensions.y
+
     layer_count := desc.layer_count
     if layer_count == 0 {
         layer_count = 1

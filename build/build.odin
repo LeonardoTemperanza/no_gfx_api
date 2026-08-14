@@ -11,7 +11,7 @@ import "core:strings"
 import "core:thread"
 import "core:sync"
 import intr "base:intrinsics"
-import path "core:path/filepath"
+import fp "core:path/filepath"
 
 Command :: struct
 {
@@ -205,6 +205,11 @@ add_examples :: proc(dir: string, output_prefix := "")
     {
         if info.type == .Directory && info.name != "shared" && info.name != "third_party"
         {
+            // NOTE: Check if directory contains .odin files. If not, skip it.
+            // This can happen because when/if an example is renamed or removed,
+            // git will leave an empty directory for the old name.
+            if !contains_odin_files(info.fullpath) do continue
+
             // Look for shaders
             shaders_nosl, shaders_slang := get_shaders_in_dir(info.fullpath)
 
@@ -223,6 +228,30 @@ add_examples :: proc(dir: string, output_prefix := "")
         log.errorf("Read directory failed at %v: %v", path, err)
         return
     }
+}
+
+contains_odin_files :: proc(path: string) -> bool
+{
+    dir, err_o := os.open(path)
+    defer os.close(dir)
+    ensure(err_o == nil)
+    it := os.read_directory_iterator_create(dir)
+    defer os.read_directory_iterator_destroy(&it)
+
+    for info in os.read_directory_iterator(&it)
+    {
+        if info.type != .Directory && fp.ext(info.name) == ".odin" {
+            return true
+        }
+    }
+
+    if path, err := os.read_directory_iterator_error(&it); err != nil
+    {
+        log.errorf("Read directory failed at %v: %v", path, err)
+        return false
+    }
+
+    return false
 }
 
 get_shaders_in_dir :: proc(path: string) -> (shaders_nosl: [dynamic]string, shaders_slang: [dynamic]string)
@@ -374,10 +403,10 @@ change_working_dir_to_project_root :: proc()
     ensure(err_a == nil)
 
     // "odin run" creates an .exe at the current working directory, so support that case as well.
-    exe_dir := path.dir(exe_path_abs)
+    exe_dir := fp.dir(exe_path_abs)
     if os.stem(exe_dir) == "build"
     {
-        root_dir := path.dir(exe_dir)
+        root_dir := fp.dir(exe_dir)
         os.chdir(root_dir)
     }
     else if os.stem(exe_dir) == "no_gfx_api"

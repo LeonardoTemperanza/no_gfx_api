@@ -153,6 +153,7 @@ Sampler_Desc :: struct
     min_lod: f32,
     max_lod: f32,  // 0.0 = use all lods
     max_anisotropy: f32,
+    compare_op: Compare_Op,  // Used for comparison/shadow sampling
 }
 
 Texture_View_Desc :: struct
@@ -594,20 +595,22 @@ arena_alloc_raw :: proc(arena: ^Arena, #any_int el_size: i64, #any_int el_count:
     bytes := el_size * el_count
     assert(bytes >= 0 && align > 0)
 
+    align_cleaned := max(16, align)
+
     if bytes == 0 do return {}
 
     block := arena.blocks[arena.block_idx]
 
     // If we request an alignment of > 16 and cpu/gpu are only aligned to 16,
     // it's impossible to find the same offset for both.
-    if block.p.cpu != nil && uintptr(block.p.cpu) % uintptr(align) != uintptr(block.p.gpu.ptr) % uintptr(align) {
+    if block.p.cpu != nil && uintptr(block.p.cpu) % uintptr(align_cleaned) != uintptr(block.p.gpu.ptr) % uintptr(align_cleaned) {
         panic("Could not satisfy alignment requirements in GPU arena allocation.")
     }
 
     gpu_addr := uintptr(block.p.gpu.ptr) + uintptr(arena.offset)
-    arena.offset = i64(align_up(u64(gpu_addr), u64(align)) - u64(uintptr(block.p.gpu.ptr)))
+    arena.offset = i64(align_up(u64(gpu_addr), u64(align_cleaned)) - u64(uintptr(block.p.gpu.ptr)))
     if arena.offset + bytes > block.size {
-        block = arena_next_block(arena, bytes, align)
+        block = arena_next_block(arena, bytes, align_cleaned)
         arena.offset = 0
     }
 
