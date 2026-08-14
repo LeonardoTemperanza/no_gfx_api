@@ -2752,25 +2752,19 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc, 
     // TODO: Vulkan technically allows render passes with no attachments (the shaders
     // can have side-effects). Requires further testing and validation checks should
     // be added accordingly.
+    first_valid_attachment: Render_Attachment
+    if len(desc.color_attachments) > 0 {
+        first_valid_attachment = desc.color_attachments[0]
+    } else if desc.depth_attachment != nil {
+        first_valid_attachment = desc.depth_attachment
+    } else if desc.stencil_attachment != nil {
+        first_valid_attachment = desc.stencil_attachment
+    }
+
     width, height := desc.render_area_size.x, desc.render_area_size.y
-    if width == {} {
-        if (len(desc.color_attachments) != 0) {
-            width = desc.color_attachments[0].texture.dimensions.x
-        } else if (desc.depth_attachment != nil) {
-            width = desc.depth_attachment.?.texture.dimensions.x
-        } else if (desc.stencil_attachment != nil) {
-            width = desc.stencil_attachment.?.texture.dimensions.x
-        }
-    }
-    if height == {} {
-        if (len(desc.color_attachments) != 0) {
-            height = desc.color_attachments[0].texture.dimensions.y
-        } else if (desc.depth_attachment != nil) {
-            height = desc.depth_attachment.?.texture.dimensions.y
-        } else if (desc.stencil_attachment != nil) {
-            height = desc.stencil_attachment.?.texture.dimensions.y
-        }
-    }
+    if width == {}  do width  = first_valid_attachment.texture.dimensions.x
+    if height == {} do height = first_valid_attachment.texture.dimensions.y
+
     layer_count := desc.layer_count
     if layer_count == 0 {
         layer_count = 1
