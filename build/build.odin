@@ -28,7 +28,7 @@ COMMANDS := []Command {
     { "shaders_nosl", cmd_shaders_nosl },
     { "shaders_slang", cmd_shaders_slang },
     { "run_compiler_tests", cmd_run_compiler_tests },
-    { "run_no_gfx_tests", cmd_run_no_gfx_tests }
+    { "run_all_tests", cmd_run_all_tests }
 }
 
 Example :: struct
@@ -192,11 +192,11 @@ cmd_run_compiler_tests :: proc() -> bool
     return res
 }
 
-cmd_run_no_gfx_tests :: proc() -> bool
+cmd_run_all_tests :: proc() -> bool
 {
     cmd_run_compiler_tests() or_return
     res := true
-    res &= run_task("odin", "run", "tests", "--", "gen_goldens")
+    res &= run_task("odin", "run", "tests", "--", "gen_local_goldens")
     return res
 }
 

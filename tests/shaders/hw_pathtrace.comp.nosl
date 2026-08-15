@@ -1,0 +1,296 @@
+
+Scene :: struct
+{
+    instances: []Instance,
+    meshes: []Mesh,
+}
+
+Mesh :: struct
+{
+    pos: []vec4,
+    normal: []vec4,
+    indices: []uint,
+}
+
+Instance :: struct
+{
+    mesh_idx: uint,
+}
+
+Data :: struct
+{
+    output_texture: texture_rw_id,
+    tlas: bvh_id,
+    scene: Scene,
+    accum_counter: uint,
+    camera_to_world: mat4,
+}
+
+main :: (data: ^Data @data, global_invocation_id: uvec3 @global_invocation_id)
+{
+    resolution := uvec2(texture_size(data.output_texture));
+
+    init_rng(uint(global_invocation_id.y * resolution.x + global_invocation_id.x), data.accum_counter);
+
+    uv := vec2(global_invocation_id.xy) / vec2(resolution);
+    coord := 2.0 * uv - 1.0;
+
+    coord *= tan((90.0 * pi / 180.0) / 2.0);
+    coord.y *= float(resolution.y) / float(resolution.x);
+
+    world_camera_pos := (data.camera_to_world * vec4(0, 0, 0, 1)).xyz;
+    camera_lookat := normalize(vec3(coord, 1));
+    world_camera_lookat := normalize(data.camera_to_world * vec4(camera_lookat, 0.0)).xyz;
+
+    camera_ray: Ray;
+    camera_ray.ori = world_camera_pos;
+    camera_ray.dir = world_camera_lookat;
+    color := pathtrace(camera_ray, data.tlas, data.scene);
+
+    if all(global_invocation_id.xy < resolution)
+    {
+        if data.accum_counter > 1
+        {
+            weight := 1.0 / float(data.accum_counter);
+            prev_color := texture_load(data.output_texture, ivec2(global_invocation_id.xy)).xyz;
+            color = prev_color * (1 - weight) + color * weight;
+            color = max(color, vec3(0, 0, 0));
+        }
+
+        texture_store(data.output_texture, ivec2(global_invocation_id.xy), vec4(color, 1));
+    }
+}
+
+pathtrace :: (start_ray: Ray, tlas_id: bvh_id, scene: Scene) -> vec3
+{
+    radiance := vec3(0, 0, 0);
+    weight := vec3(1, 1, 1);
+    ray := start_ray;
+
+    albedo_color := vec3(0.9, 0.9, 0.9);
+
+    max_bounces := 5;
+    for bounce := 0; bounce <= max_bounces; bounce += 1
+    {
+        hit := ray_scene_intersection(ray, tlas_id, scene);
+        if !hit.hit
+        {
+            // Simple gradient environment map.
+            coords := vec2(atan(ray.dir.x, ray.dir.z) / (2.0 * 3.1415), acos(clamp(ray.dir.y, -1.0, 1.0)) / 3.1415);
+            emission := mix(vec3(0.8, 0.7, 0.1), vec3(0.1, 0.2, 0.8), vec3(coords.y)) * 5.0;
+            radiance += emission * weight;
+            break;
+        }
+
+        // Accumulate emission.
+        // radiance += weight * /* ... */;
+
+        outgoing := -ray.dir;
+
+        // Compute next direction.
+        incoming := vec3(0, 0, 0);
+        rnd := random_vec2();
+        incoming = sample_matte(albedo_color, hit.normal, outgoing, rnd);
+        if all(incoming == vec3(0, 0, 0)) { break; }
+
+        prob := sample_matte_pdf(albedo_color, hit.normal, outgoing, incoming);
+        weight *= eval_matte(albedo_color, hit.normal, outgoing, incoming) / prob;
+
+        // Update ray.
+        ray.ori += ray.dir * hit.t;
+        ray.dir = incoming;
+
+        // Check weight.
+        if all(weight == vec3(0, 0, 0)) || !is_finite(weight) { break; }
+
+        // Russian roulette.
+        if(bounce > 3)
+        {
+            survive_prob := min(0.99, max(weight.x, max(weight.y, weight.z)));
+            if random_f32() >= survive_prob { break; }
+            weight /= survive_prob;
+        }
+    }
+
+    return radiance;
+}
+
+Ray :: struct
+{
+    ori: vec3,
+    dir: vec3,
+}
+
+Hit_Info :: struct
+{
+    hit: bool,
+    t: float,
+    normal: vec3,
+}
+
+ray_scene_intersection :: (ray: Ray, tlas_id: bvh_id, scene: Scene) -> Hit_Info
+{
+    // @tmp: These constants will be implicit (They may even be an enum)
+    Ray_Flags_Opaque: uint = 1;
+    Ray_Flags_Terminate_On_First_Hit: uint = 4;  // For occlusion checking (shadow rays)
+    Ray_Flags_Skip_Closest_Hit_Shader: uint = 8;
+    Ray_Result_Kind_Miss: uint = 0;
+    Ray_Result_Kind_Hit_Mesh: uint = 1;
+    Ray_Result_Kind_Hit_AABB: uint = 2;
+
+    hit_info: Hit_Info;
+
+    desc: Ray_Desc;
+    desc.flags = Ray_Flags_Opaque;
+    desc.cull_mask = 0xFF;
+    desc.t_min = 0.001;
+    desc.t_max = 1000000000.0;
+    desc.origin = ray.ori;
+    desc.dir = ray.dir;
+    rq := rayquery_init(desc, tlas_id);
+
+    rayquery_proceed(rq);
+
+    // For scenes which may contain non-opaque geometry:
+    /*
+    for ; rayquery_proceed(rq);
+    {
+        rayquery_accept(rq);
+    }
+    */
+
+    hit := rayquery_result(rq);
+
+    if hit.kind != Ray_Result_Kind_Hit_Mesh {
+        hit_info.hit = false;
+        return hit_info;
+    }
+
+    instance := scene.instances[hit.instance_idx];
+    mesh := scene.meshes[instance.mesh_idx];
+    indices := mesh.indices;
+    base_idx := hit.primitive_idx * 3;
+
+    w := 1.0 - hit.barycentrics.x - hit.barycentrics.y;
+    n0 := mesh.normal[indices[base_idx+0]];
+    n1 := mesh.normal[indices[base_idx+1]];
+    n2 := mesh.normal[indices[base_idx+2]];
+    normal := normalize(n0 * w + n1 * hit.barycentrics.x + n2 * hit.barycentrics.y);
+    if hit.front_face { normal *= -1.0; }
+    world_normal := normalize(transpose(hit.world_to_object) * normal.xyz);
+
+    bary := hit.barycentrics;
+    hit_info.hit = true;
+    hit_info.t = hit.t;
+    hit_info.normal = world_normal.xyz;
+    return hit_info;
+}
+
+// RNG
+
+pi: float = 3.1415;
+
+RNG_STATE: uint;
+
+hash_u32 :: (seed: uint) -> uint
+{
+    x := seed;
+    x = x ~ (x >> 17);
+    x = x * 0xed5ad4bb;
+    x = x ~ (x >> 11);
+    x = x * 0xac4c1b51;
+    x = x ~ (x >> 15);
+    x = x * 0x31848bab;
+    x = x ~ (x >> 14);
+    return x;
+}
+
+init_rng :: (global_id: uint, accum_counter: uint)
+{
+    seed: uint = 0;
+    RNG_STATE = hash_u32((global_id * 19349663) ~ (accum_counter * 83492791));
+}
+
+// PCG Random number generator.
+// From: www.pcg-random.org and www.shadertoy.com/view/XlGcRh
+random_u32 :: () -> uint
+{
+    RNG_STATE *= 747796405 + 2891336453;
+    result := ((RNG_STATE >> ((RNG_STATE >> 28) + 4)) ~ RNG_STATE) * 277803737;
+    result = (result >> 22) ~ result;
+    return result;
+}
+
+// From 0 (inclusive) to 1 (exclusive)
+random_f32 :: () -> float
+{
+    RNG_STATE *= 747796405 + 2891336453;
+    result := ((RNG_STATE >> ((RNG_STATE >> 28) + 4)) ~ RNG_STATE) * 277803737;
+    result = (result >> 22) ~ result;
+    return float(result) / 4294967295.0;
+}
+
+random_vec2 :: () -> vec2
+{
+    // Enforce evaluation order.
+    rnd0 := random_f32();
+    rnd1 := random_f32();
+    return vec2(rnd0, rnd1);
+}
+
+copysignf :: (mag: float, sgn: float) -> float
+{
+    return mag if sgn > 0 else -mag;
+}
+
+basis_fromz :: (v: vec3) -> mat4
+{
+    // https://graphics.pixar.com/library/OrthonormalB/paper.pdf
+    z := normalize(v);
+    sign := copysignf(1.0, z.z);
+    a := -1.0 / (sign + z.z);
+    b := z.x * z.y * a;
+    x := vec3(1.0 + sign * z.x * z.x * a, sign * b, -sign * z.x);
+    y := vec3(b, sign + z.y * z.y * a, -z.y);
+    return mat4(vec4(x, 0), vec4(y, 0), vec4(z, 0), vec4(0, 0, 0, 0));
+}
+
+sample_hemisphere_cos :: (normal: vec3, ruv: vec2) -> vec3
+{
+    z   := sqrt(ruv.y);
+    r   := sqrt(1 - z * z);
+    phi := 2 * pi * ruv.x;
+    local_direction := vec3(r * cos(phi), r * sin(phi), z);
+    return normalize(basis_fromz(normal) * vec4(local_direction, 0)).xyz;
+}
+
+sample_hemisphere_cos_pdf :: (normal: vec3, direction: vec3) -> float
+{
+    cosw := dot(normal, direction);
+    return 0 if cosw <= 0 else cosw/pi;
+}
+
+// BSDF sampling
+
+sample_matte :: (color: vec3, normal: vec3, outgoing: vec3, rn: vec2) -> vec3
+{
+    return sample_hemisphere_cos(normal, rn);
+}
+
+eval_matte :: (color: vec3, normal: vec3, outgoing: vec3, incoming: vec3) -> vec3
+{
+    return color / pi * abs(dot(normal, incoming));
+}
+
+sample_matte_pdf :: (color: vec3, normal: vec3, outgoing: vec3, incoming: vec3) -> float
+{
+    return sample_hemisphere_cos_pdf(normal, incoming);
+}
+
+is_finite :: (v: vec3) -> bool
+{
+    is_x_finite := (float_bits_to_int(v.x) & 0x7F800000) != 0x7F800000;
+    is_y_finite := (float_bits_to_int(v.y) & 0x7F800000) != 0x7F800000;
+    is_z_finite := (float_bits_to_int(v.z) & 0x7F800000) != 0x7F800000;
+    return is_x_finite && is_y_finite && is_z_finite;
+}

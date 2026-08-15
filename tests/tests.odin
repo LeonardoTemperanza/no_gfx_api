@@ -14,6 +14,7 @@ import "core:math"
 import "core:math/linalg"
 import intr "base:intrinsics"
 import "core:slice"
+import "base:runtime"
 
 import "../gpu"
 
@@ -23,23 +24,43 @@ Test :: struct
 {
     name: string,
     test_proc: proc(target: Render_Target),
+    required_features: gpu.Features,
 }
 
 tests := []Test {
-    { "triangle", test_triangle },
-    { "texture", test_texture },
-    { "texture_advanced", test_texture_advanced },
-    { "compute", test_compute },
-    { "comparison_sampler", test_comparison_sampler },
+    { "triangle", test_triangle, {} },
+    { "texture", test_texture, {} },
+    { "texture_advanced", test_texture_advanced, {}},
+    { "indirect", test_indirect, {}},
+    { "compute", test_compute, {}},
+    { "comparison_sampler", test_comparison_sampler, {}},
+    { "sw_pathtracing", test_sw_pathtracing, {}},  // Test a complex shader. Scene is hardcoded in the shader, HW RT is not used.
+                                                // This is useful because CPU implementations of Vulkan usually don't support HW RT.
+    { "hw_pathtracing", test_hw_pathtracing, { .Raytracing }},
+}
+
+Operation_Mode :: enum
+{
+    Gen_Local_Goldens, // Will be put into "goldens_local" (in addition to "output")
+    Compare_To_Local,  // Will compare with "goldens_local"
+    Compare_To_Global, // Will compare with "goldens". This should only be done with the same CPU Vulkan implementation
+                       // used to generate them in the first place.
 }
 
 main :: proc()
 {
     cmd_args := os.args
 
-    gen_goldens := false
-    if len(cmd_args) > 1 && cmd_args[1] == "gen_goldens" {
-        gen_goldens = true
+    op_mode := Operation_Mode.Compare_To_Global
+    if len(cmd_args) > 1
+    {
+        if cmd_args[1] == "gen_local_goldens" {
+            op_mode = .Gen_Local_Goldens
+        } else if cmd_args[1] == "compare_to_local" {
+            op_mode = .Compare_To_Local
+        } else if cmd_args[1] == "compare_to_global" {
+            op_mode = .Compare_To_Global
+        }
     }
 
     console_logger := log.create_console_logger()
@@ -74,21 +95,37 @@ main :: proc()
         test.test_proc(target)
         gpu.wait_idle()
 
-        output_path  := fmt.tprintf("tests/goldens_local/%v_%v.bmp", test_id, test.name)
-        compare_path := fmt.tprintf("tests/goldens/%v_%v.bmp", test_id, test.name)
+        output_path := fmt.tprintf("tests/output/%v_%v.bmp", test_id, test.name)
+        compare_path_local := fmt.tprintf("tests/goldens_local/%v_%v.bmp", test_id, test.name)
+        compare_path_global := fmt.tprintf("tests/goldens/%v_%v.bmp", test_id, test.name)
 
-        if gen_goldens
+        save_target_color(target, output_path)
+
+        switch op_mode
         {
-            save_target_color(target, output_path)
-        }
-        else
-        {
-            matches := compare_to_golden(target, compare_path)
-            if matches {
-                fmt.printfln("%v - Ok.", test.name)
-            } else {
-                fmt.printfln("%v - Fail!", test.name)
-                program_return = 1
+            case .Gen_Local_Goldens:
+            {
+                save_target_color(target, compare_path_local)
+            }
+            case .Compare_To_Local:
+            {
+                matches := compare_to_golden(target, compare_path_local)
+                if matches {
+                    fmt.printfln("%v - Ok.", test.name)
+                } else {
+                    fmt.printfln("%v - Fail!", test.name)
+                    program_return = 1
+                }
+            }
+            case .Compare_To_Global:
+            {
+                matches := compare_to_golden(target, compare_path_global)
+                if matches {
+                    fmt.printfln("%v - Ok.", test.name)
+                } else {
+                    fmt.printfln("%v - Fail!", test.name)
+                    program_return = 1
+                }
             }
         }
         gpu.wait_idle()
@@ -158,12 +195,528 @@ test_triangle :: proc(target: Render_Target)
 
 test_texture :: proc(target: Render_Target)
 {
+    load_texture :: proc(bytes: []byte, upload_arena: ^gpu.Arena, cmd_buf: gpu.Command_Buffer) -> gpu.Owned_Texture
+    {
+        options := image.Options {
+            .alpha_add_if_missing,
+        }
+        img, err := image.load_from_bytes(bytes, options)
+        ensure(err == nil, "Could not load texture.")
+        defer image.destroy(img)
+
+        staging := gpu.arena_alloc_raw(upload_arena, u64(len(img.pixels.buf)), 1)
+        runtime.mem_copy(staging.cpu, raw_data(img.pixels.buf), len(img.pixels.buf))
+
+        texture := gpu.texture_alloc_and_create({
+            dimensions = { u32(img.width), u32(img.height), 1 },
+            format = .RGBA8_Unorm,
+            usage = { .Sampled },
+        })
+        gpu.cmd_copy_to_texture(cmd_buf, texture, staging)
+        return texture
+    }
+
     Mona_Lisa_Texture :: #load("assets/monalisa.jpg")
+
+    vert_shader := gpu.shader_create(#load("shaders/sample_texture.vert.spv", []u32), .Vertex)
+    frag_shader := gpu.shader_create(#load("shaders/sample_texture.frag.spv", []u32), .Fragment)
+    defer {
+        gpu.shader_destroy(vert_shader)
+        gpu.shader_destroy(frag_shader)
+    }
+
+    desc_pool := gpu.desc_pool_create()
+    defer gpu.desc_pool_destroy(&desc_pool)
+
+    Vertex :: struct { pos: [3]f32, uv: [2]f32 }
+
+    arena := gpu.arena_create()
+    defer gpu.arena_destroy(&arena)
+
+    verts := gpu.arena_alloc(&arena, Vertex, 4)
+    verts.cpu[0].pos = { -0.5,  0.5 * 1.48, 0.0 }
+    verts.cpu[1].pos = {  0.5, -0.5 * 1.48, 0.0 }
+    verts.cpu[2].pos = {  0.5,  0.5 * 1.48, 0.0 }
+    verts.cpu[3].pos = { -0.5, -0.5 * 1.48, 0.0 }
+    verts.cpu[0].uv  = {  0.0,  1.0 }
+    verts.cpu[1].uv  = {  1.0,  0.0 }
+    verts.cpu[2].uv  = {  1.0,  1.0 }
+    verts.cpu[3].uv  = {  0.0,  0.0 }
+
+    indices := gpu.arena_alloc(&arena, u32, 6)
+    indices.cpu[0] = 0
+    indices.cpu[1] = 2
+    indices.cpu[2] = 1
+    indices.cpu[3] = 0
+    indices.cpu[4] = 1
+    indices.cpu[5] = 3
+
+    verts_local := gpu.mem_alloc(Vertex, 4, gpu.Memory.GPU)
+    indices_local := gpu.mem_alloc(u32, 6, gpu.Memory.GPU)
+    defer {
+        gpu.mem_free(verts_local)
+        gpu.mem_free(indices_local)
+    }
+
+    upload_cmd_buf := gpu.commands_begin(.Main)
+
+    upload_arena := gpu.arena_create()
+    defer gpu.arena_destroy(&upload_arena)
+
+    tex := load_texture(Mona_Lisa_Texture, &upload_arena, upload_cmd_buf)
+    defer gpu.texture_free_and_destroy(&tex)
+    gpu.cmd_mem_copy(upload_cmd_buf, verts_local, verts)
+    gpu.cmd_mem_copy(upload_cmd_buf, indices_local, indices)
+    gpu.cmd_barrier(upload_cmd_buf, .Transfer, .All, {})
+
+    gpu.queue_submit(.Main, { upload_cmd_buf })
+
+    tex_id := gpu.desc_pool_alloc_texture(&desc_pool, gpu.texture_view_descriptor(tex, {}))
+    linear_sampler := gpu.desc_pool_alloc_sampler(&desc_pool, gpu.sampler_descriptor({}))
+
+    frame_arena := &upload_arena
+
+    cmd_buf := gpu.commands_begin(.Main)
+    gpu.cmd_begin_render_pass(cmd_buf, {
+        color_attachments = {
+            { texture = target.color, clear_color = { 0, 0, 0, 1 } }
+        }
+    })
+    gpu.cmd_set_shaders(cmd_buf, vert_shader, frag_shader)
+    gpu.cmd_set_desc_heap(cmd_buf, desc_pool)
+    Vert_Data :: struct {
+        verts: rawptr,
+    }
+    verts_data := gpu.arena_alloc(frame_arena, Vert_Data)
+    verts_data.cpu.verts = verts_local.gpu.ptr
+    Frag_Data :: struct {
+        texture: u32,
+        sampler: u32,
+    }
+    frag_data := gpu.arena_alloc(frame_arena, Frag_Data)
+    frag_data.cpu.texture = tex_id
+    frag_data.cpu.sampler = linear_sampler
+
+    gpu.cmd_draw_indexed(cmd_buf, verts_data, frag_data, indices_local)
+    gpu.cmd_end_render_pass(cmd_buf)
+    gpu.queue_submit(.Main, { cmd_buf })
+    gpu.wait_idle()
 }
 
 test_texture_advanced :: proc(target: Render_Target)
 {
+    shared.CAM_POS = {-1.3, -1.7, -1.3}
+    shared.CAM_ANGLE = {math.PI * 0.25, math.PI * 0.25}
 
+    build_sky_mesh :: proc(upload_arena: ^gpu.Arena, cmd_buf: gpu.Command_Buffer) -> (gpu.slice_t([3]f32), gpu.slice_t(u32))
+    {
+        verts, indices := shared.build_sphere()
+        defer {
+            delete(verts)
+            delete(indices)
+        }
+
+        verts_staging := gpu.arena_alloc(upload_arena, [3]f32, len(verts))
+        indices_staging := gpu.arena_alloc(upload_arena, u32, len(indices))
+        copy(verts_staging.cpu, verts[:])
+        copy(indices_staging.cpu, indices[:])
+
+        verts_local := gpu.mem_alloc([3]f32, len(verts))
+        indices_local := gpu.mem_alloc(u32, len(indices))
+        gpu.cmd_mem_copy(cmd_buf, verts_local, verts_staging)
+        gpu.cmd_mem_copy(cmd_buf, indices_local, indices_staging)
+        return verts_local, indices_local
+    }
+
+    build_cloud_mesh :: proc(upload_arena: ^gpu.Arena, cmd_buf: gpu.Command_Buffer) -> (gpu.slice_t([3]f32), gpu.slice_t(u32))
+    {
+        verts := shared.UNIT_CUBE_VERTS[:]
+        indices := shared.CUBE_INDICES[:]
+        verts_staging := gpu.arena_alloc(upload_arena, [3]f32, len(verts))
+        indices_staging := gpu.arena_alloc(upload_arena, u32, len(indices))
+        copy(verts_staging.cpu, verts[:])
+        copy(indices_staging.cpu, indices[:])
+
+        verts_local := gpu.mem_alloc([3]f32, len(verts))
+        indices_local := gpu.mem_alloc(u32, len(indices))
+        gpu.cmd_mem_copy(cmd_buf, verts_local, verts_staging)
+        gpu.cmd_mem_copy(cmd_buf, indices_local, indices_staging)
+        return verts_local, indices_local
+    }
+
+    build_sky_cubemap :: proc(upload_arena: ^gpu.Arena, cmd_buf: gpu.Command_Buffer) -> gpu.Owned_Texture
+    {
+        Sky_Textures: [gpu.Cubemap_Side][]u8 = {
+            .PX = #load("assets/px.png"),
+            .NX = #load("assets/nx.png"),
+            .PY = #load("assets/py.png"),
+            .NY = #load("assets/ny.png"),
+            .PZ = #load("assets/pz.png"),
+            .NZ = #load("assets/nz.png"),
+        }
+        texture: gpu.Owned_Texture
+
+        for side in gpu.Cubemap_Side
+        {
+            options := image.Options {
+                .alpha_add_if_missing,
+            }
+            img, err := image.load_from_bytes(Sky_Textures[side], options)
+            ensure(err == nil, "Could not load texture.")
+            defer image.destroy(img)
+
+            if texture == {}
+            {
+                texture = gpu.texture_alloc_and_create({
+                    type = .Cube,
+                    dimensions = { u32(img.width), u32(img.height), 1 },
+                    format = .RGBA8_Unorm,
+                    usage = { .Sampled },
+                    layer_count = 6,
+                })
+            }
+
+            staging := gpu.arena_alloc(upload_arena, u8, len(img.pixels.buf))
+            copy(staging.cpu, img.pixels.buf[:])
+            gpu.cmd_copy_to_texture(cmd_buf, texture, staging, region = { base_layer = u32(side) })
+        }
+        return texture
+    }
+
+    generate_volume :: proc(size: int) -> [][4]u8
+    {
+        data := make([][4]u8, size*size*size)
+
+        inv := 1.0 / f32(size - 1)
+
+        for z in 0..<size
+        {
+            for y in 0..<size
+            {
+                for x in 0..<size
+                {
+                    idx := x + y*size + z*size*size
+                    data[idx] = [4]u8 {
+                        u8(f32(x) / f32(size) * f32(255)),
+                        u8(f32(y) / f32(size) * f32(255)),
+                        u8(f32(z) / f32(size) * f32(255)),
+                        u8(math.trunc(f32(1.0) * f32(255.0))),
+                    }
+                }
+            }
+        }
+
+        return data
+    }
+
+    build_3d_texture :: proc(upload_arena: ^gpu.Arena, cmd_buf: gpu.Command_Buffer) -> gpu.Owned_Texture
+    {
+        volume_res :: 128
+        texture := gpu.texture_alloc_and_create({
+            type = .D3,
+            dimensions = { volume_res, volume_res, volume_res },
+            format = .RGBA8_Unorm,
+            usage = { .Sampled },
+        })
+
+        volume := generate_volume(volume_res)
+
+        staging := gpu.arena_alloc(upload_arena, [4]u8, len(volume))
+        copy(staging.cpu, volume)
+        gpu.cmd_copy_to_texture(cmd_buf, texture, staging)
+        return texture
+    }
+
+    sky_vert_shader := gpu.shader_create(#load("shaders/sky.vert.spv", []u32), .Vertex)
+    sky_frag_shader := gpu.shader_create(#load("shaders/sky.frag.spv", []u32), .Fragment)
+    defer {
+        gpu.shader_destroy(sky_vert_shader)
+        gpu.shader_destroy(sky_frag_shader)
+    }
+
+    volume_vert_shader := gpu.shader_create(#load("shaders/volume.vert.spv", []u32), .Vertex)
+    volume_frag_shader := gpu.shader_create(#load("shaders/volume.frag.spv", []u32), .Fragment)
+    defer {
+        gpu.shader_destroy(volume_vert_shader)
+        gpu.shader_destroy(volume_frag_shader)
+    }
+
+    desc_pool := gpu.desc_pool_create()
+    defer gpu.desc_pool_destroy(&desc_pool)
+
+    upload_arena := gpu.arena_create()
+    defer gpu.arena_destroy(&upload_arena)
+
+    upload_cmd_buf := gpu.commands_begin(.Main)
+
+    sky_cubemap := build_sky_cubemap(&upload_arena, upload_cmd_buf)
+    defer gpu.texture_free_and_destroy(&sky_cubemap)
+
+    texture_3d := build_3d_texture(&upload_arena, upload_cmd_buf)
+    defer gpu.texture_free_and_destroy(&texture_3d)
+
+    sky_verts, sky_indices := build_sky_mesh(&upload_arena, upload_cmd_buf)
+    defer {
+        gpu.mem_free(sky_verts)
+        gpu.mem_free(sky_indices)
+    }
+
+    cloud_verts, cloud_indices := build_cloud_mesh(&upload_arena, upload_cmd_buf)
+    defer {
+        gpu.mem_free(cloud_verts)
+        gpu.mem_free(cloud_indices)
+    }
+
+    gpu.cmd_barrier(upload_cmd_buf, .Transfer, .All, {})
+    gpu.queue_submit(.Main, { upload_cmd_buf })
+
+    sky_cubemap_id := gpu.desc_pool_alloc_texture(&desc_pool, gpu.texture_view_descriptor(sky_cubemap, {}))
+    texture_3d_id := gpu.desc_pool_alloc_texture(&desc_pool, gpu.texture_view_descriptor(texture_3d, {}))
+    linear_sampler_id := gpu.desc_pool_alloc_sampler(&desc_pool, gpu.sampler_descriptor({}))
+
+    frame_arena := &upload_arena
+
+    world_to_view := shared.first_person_camera_view(0.0)
+    aspect_ratio := f32(Target_Size) / f32(Target_Size)
+    view_to_proj := linalg.matrix4_perspective_f32(math.RAD_PER_DEG * 59.0, aspect_ratio, 0.1, 1000.0, false)
+
+    cmd_buf := gpu.commands_begin(.Main)
+    gpu.cmd_begin_render_pass(cmd_buf, {
+        color_attachments = {
+            { texture = target.color, clear_color = { 0.7, 0.7, 0.7, 1.0 } }
+        },
+        depth_attachment = gpu.Render_Attachment {
+            texture = target.depth, clear_color = 1.0
+        },
+    })
+
+    gpu.cmd_set_desc_heap(cmd_buf, desc_pool)
+
+    // Draw skysphere
+    {
+        gpu.cmd_set_shaders(cmd_buf, sky_vert_shader, sky_frag_shader)
+        gpu.cmd_set_depth_state(cmd_buf, { compare = .Always })
+        // Render the skysphere inside out
+        gpu.cmd_set_raster_state(cmd_buf, { cull_mode = .Cull_CCW })
+
+        Vert_Data :: struct #all_or_none {
+            positions: rawptr,
+            world_to_view: [16]f32,
+            view_to_proj: [16]f32,
+        }
+        verts_data := gpu.arena_alloc(frame_arena, Vert_Data)
+        verts_data.cpu^ = {
+            positions = sky_verts.gpu.ptr,
+            world_to_view = intr.matrix_flatten(world_to_view),
+            view_to_proj = intr.matrix_flatten(view_to_proj),
+        }
+
+        Frag_Data :: struct #all_or_none {
+            sky_texture: u32,
+            sky_sampler: u32,
+        }
+        frag_data := gpu.arena_alloc(frame_arena, Frag_Data)
+        frag_data.cpu^ = {
+            sky_texture = sky_cubemap_id,
+            sky_sampler = linear_sampler_id,
+        }
+
+        gpu.cmd_draw_indexed(cmd_buf, verts_data, frag_data, sky_indices)
+    }
+
+    // Draw cloud
+    {
+        gpu.cmd_set_shaders(cmd_buf, volume_vert_shader, volume_frag_shader)
+        gpu.cmd_set_depth_state(cmd_buf, { mode = { .Read, .Write }, compare = .Less })
+        gpu.cmd_set_raster_state(cmd_buf, { cull_mode = .Cull_CW })
+        gpu.cmd_set_blend_state(cmd_buf, {
+            enable = true,
+            color_op = .Add,
+            src_color_factor = .Src_Alpha,
+            dst_color_factor = .One_Minus_Src_Alpha,
+            alpha_op = .Add,
+            src_alpha_factor = .One,
+            dst_alpha_factor = .One_Minus_Src_Alpha,
+            color_write_mask = gpu.Color_Components_All,
+        })
+
+        Vert_Data :: struct #all_or_none {
+            positions: rawptr,
+            model_to_world: [16]f32,
+            world_to_view: [16]f32,
+            view_to_proj: [16]f32,
+        }
+        verts_data := gpu.arena_alloc(frame_arena, Vert_Data)
+        verts_data.cpu^ = {
+            positions = cloud_verts.gpu.ptr,
+            model_to_world = intr.matrix_flatten(cast(matrix[4, 4]f32) 1),
+            world_to_view = intr.matrix_flatten(world_to_view),
+            view_to_proj = intr.matrix_flatten(view_to_proj),
+        }
+
+        Frag_Data :: struct #all_or_none {
+            cloud_texture: u32,
+            cloud_sampler: u32,
+            camera_pos: [3]f32,
+        }
+        frag_data := gpu.arena_alloc(frame_arena, Frag_Data)
+        frag_data.cpu^ = {
+            cloud_texture = texture_3d_id,
+            cloud_sampler = linear_sampler_id,
+            camera_pos = shared.CAM_POS
+        }
+        gpu.cmd_draw_indexed(cmd_buf, verts_data, frag_data, cloud_indices)
+    }
+
+    gpu.cmd_end_render_pass(cmd_buf)
+    gpu.queue_submit(.Main, { cmd_buf })
+    gpu.wait_idle()
+}
+
+test_indirect :: proc(target: Render_Target)
+{
+    Num_Triangles :: 32
+
+    hsl_to_rgb :: proc(h: f32, s: f32, l: f32) -> linalg.Vector3f32
+    {
+        c := (1.0 - abs(2.0 * l - 1.0)) * s
+        x := c * (1.0 - abs(math.mod(h * 6.0, 2.0) - 1.0))
+        m := l - c / 2.0
+
+        r, g, b: f32
+
+        if h < 1.0/6.0 {
+            r, g, b = c, x, 0.0
+        } else if h < 2.0/6.0 {
+            r, g, b = x, c, 0.0
+        } else if h < 3.0/6.0 {
+            r, g, b = 0.0, c, x
+        } else if h < 4.0/6.0 {
+            r, g, b = 0.0, x, c
+        } else if h < 5.0/6.0 {
+            r, g, b = x, 0.0, c
+        } else {
+            r, g, b = c, 0.0, x
+        }
+
+        return { r + m, g + m, b + m }
+    }
+
+    vert_shader := gpu.shader_create(#load("shaders/indirect_triangles.vert.spv", []u32), .Vertex)
+    frag_shader := gpu.shader_create(#load("shaders/indirect_triangles.frag.spv", []u32), .Fragment)
+    defer {
+        gpu.shader_destroy(vert_shader)
+        gpu.shader_destroy(frag_shader)
+    }
+
+    Vertex :: struct { pos: [3]f32 }
+
+    arena := gpu.arena_create()
+    defer gpu.arena_destroy(&arena)
+
+    verts := gpu.arena_alloc(&arena, Vertex, 3)
+    verts.cpu[0].pos = { -0.5,  0.5, 0.0 }
+    verts.cpu[1].pos = {  0.0, -0.5, 0.0 }
+    verts.cpu[2].pos = {  0.5,  0.5, 0.0 }
+
+    indices := gpu.arena_alloc(&arena, u32, 3)
+    indices.cpu[0] = 0
+    indices.cpu[1] = 2
+    indices.cpu[2] = 1
+
+    verts_local := gpu.mem_alloc(Vertex, 3, gpu.Memory.GPU)
+    indices_local := gpu.mem_alloc(u32, 3, gpu.Memory.GPU)
+
+    // Unified indirect data struct that extends Draw_Indexed_Indirect_Command
+    Indirect_Data :: struct {
+        using cmd: gpu.Draw_Indexed_Indirect_Command,
+        color: [3]f32,
+        pos: [3]f32,
+        size: f32,
+    }
+
+    indirect_data := gpu.mem_alloc(Indirect_Data, Num_Triangles)
+    defer gpu.mem_free(indirect_data)
+
+    count := gpu.arena_alloc(&arena, u32)
+    count.cpu^ = Num_Triangles
+
+    count_local := gpu.mem_alloc(u32, mem_type = gpu.Memory.GPU)
+
+    // Arrange triangles in a circle
+    circle_radius: f32 = 0.6
+    for i in 0..<Num_Triangles {
+        angle := f32(i) / f32(Num_Triangles) * math.PI * 2.0
+
+        // Position on circle
+        x := math.cos(angle) * circle_radius
+        y := math.sin(angle) * circle_radius
+
+        // HSL color: hue varies around the circle (0-360 degrees), saturation and lightness fixed
+        hue := angle / (math.PI * 2.0)  // 0.0 to 1.0
+        saturation: f32 = 1.0
+        lightness: f32 = 0.5
+
+        // Convert HSL to RGB
+        rgb := hsl_to_rgb(hue, saturation, lightness)
+
+        // Fill unified indirect data struct with both command and user data
+        indirect_data.cpu[i] = Indirect_Data {
+            cmd = gpu.Draw_Indexed_Indirect_Command {
+                index_count = 3,
+                instance_count = 1,
+                first_index = 0,
+                vertex_offset = 0,
+                first_instance = 0,
+            },
+            color = { rgb.x, rgb.y, rgb.z },
+            pos = { x, y, 0.0 },
+            size = 0.1,
+        }
+    }
+
+    indirect_data_local := gpu.mem_alloc(Indirect_Data, Num_Triangles, gpu.Memory.GPU)
+
+    defer {
+        gpu.mem_free(verts_local)
+        gpu.mem_free(indices_local)
+        gpu.mem_free(count_local)
+        gpu.mem_free(indirect_data_local)
+    }
+
+    upload_cmd_buf := gpu.commands_begin(.Main)
+    gpu.cmd_mem_copy(upload_cmd_buf, verts_local, verts)
+    gpu.cmd_mem_copy(upload_cmd_buf, indices_local, indices)
+    gpu.cmd_mem_copy(upload_cmd_buf, count_local, count)
+    gpu.cmd_mem_copy(upload_cmd_buf, indirect_data_local, indirect_data)
+    gpu.cmd_barrier(upload_cmd_buf, .Transfer, .All, {})
+    gpu.queue_submit(.Main, { upload_cmd_buf })
+
+    frame_arena := &arena
+
+    cmd_buf := gpu.commands_begin(.Main)
+    gpu.cmd_begin_render_pass(cmd_buf, {
+        color_attachments = {
+            { texture = target.color, clear_color = { 0, 0, 0, 1 } }
+        }
+    })
+    gpu.cmd_set_shaders(cmd_buf, vert_shader, frag_shader)
+    Vert_Data :: struct {
+        verts: rawptr,
+    }
+    shared_vert_data := gpu.arena_alloc(frame_arena, Vert_Data)
+    shared_vert_data.cpu.verts = verts_local.gpu.ptr
+
+    Use_Indirect_Multi :: true
+    when Use_Indirect_Multi {
+        gpu.cmd_draw_indexed_indirect_multi(cmd_buf, shared_vert_data, {}, indices_local, indirect_data_local, count_local)
+    } else {
+        gpu.cmd_draw_indexed_indirect(cmd_buf, shared_vert_data, {}, indices_local, gpu.slice_to_ptr(indirect_data_local))
+    }
+
+    gpu.cmd_end_render_pass(cmd_buf)
+    gpu.queue_submit(.Main, { cmd_buf })
+    gpu.wait_idle()
 }
 
 test_compute :: proc(target: Render_Target)
@@ -307,7 +860,7 @@ test_compute :: proc(target: Render_Target)
 
 // NOTE: This is not only to test comparison samplers but by default this will
 // also lead to pointers that are not 16B aligned, which leads to problems on NVidia (due to a driver bug?).
-// So this test will make sure that arena allocations are all explicitly aligned to 16B.
+// So this test checks that arena allocations are all explicitly aligned to 16B.
 test_comparison_sampler :: proc(target: Render_Target)
 {
     shared.CAM_POS = { -7.581631, 1.1906259, 0.25928685 }
@@ -385,11 +938,14 @@ test_comparison_sampler :: proc(target: Render_Target)
     arena := gpu.arena_create()
     defer gpu.arena_destroy(&arena)
 
+    old_logger := context.logger
+    context.logger = {}
     scene, _, gltf_data := shared.load_scene_gltf(Sponza_Scene, 0)
     defer {
         shared.destroy_scene(&scene)
         gltf2.unload(gltf_data)
     }
+    context.logger = old_logger
 
     meshes_gpu: [dynamic]Mesh_GPU
     defer {
@@ -525,6 +1081,16 @@ test_comparison_sampler :: proc(target: Render_Target)
     gpu.wait_idle()
 }
 
+test_sw_pathtracing :: proc(target: Render_Target)
+{
+
+}
+
+test_hw_pathtracing :: proc(target: Render_Target)
+{
+    
+}
+
 Render_Target :: struct
 {
     color: gpu.Owned_Texture,
@@ -593,6 +1159,14 @@ compare_to_golden :: proc(target: Render_Target, path: string) -> bool
     gpu.queue_submit(.Main, { cmd_buf })
     gpu.wait_idle()
 
-    is_same := slice.equal(readback.cpu, golden.pixels.buf[:])
+    // NOTE: For some reason the alpha is dropped for bmp files.
+    is_same := true
+    for i := 0; i < len(readback.cpu); i += 4
+    {
+        j := i / 4 * 3
+        is_same &= readback.cpu[i+0] == golden.pixels.buf[j+0]
+        is_same &= readback.cpu[i+1] == golden.pixels.buf[j+1]
+        is_same &= readback.cpu[i+2] == golden.pixels.buf[j+2]
+    }
     return is_same
 }

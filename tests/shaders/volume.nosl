@@ -1,0 +1,106 @@
+
+Vert_Data :: struct
+{
+    positions: []vec3,
+    model_to_world: mat4,
+    world_to_view: mat4,
+    view_to_proj: mat4,
+}
+
+Vert_Output :: struct
+{
+    pos: vec4 @position,
+    world_pos: vec3 @io(0),
+}
+
+vert :: #vertex(vert_id: uint @vert_id, data: ^Vert_Data @data) -> Vert_Output
+{
+    clip_pos := vec4(data.positions[vert_id], 1);
+    world_pos := data.model_to_world * clip_pos;
+    clip_pos = data.world_to_view * world_pos;
+    clip_pos = data.view_to_proj * clip_pos;
+    clip_pos.y = -clip_pos.y;
+
+    out: Vert_Output;
+    out.pos = clip_pos;
+    out.world_pos = world_pos.xyz;
+    return out;
+}
+
+Frag_Data :: struct
+{
+    cloud_texture: texture_id,
+    cloud_sampler: sampler_id,
+    camera_pos: vec3,
+}
+
+Intersect_Result :: struct { hit: bool, t0: float, t1: float }
+
+intersect_aabb :: (ro: vec3, rd: vec3, bmin: vec3, bmax: vec3) -> Intersect_Result
+{
+    inv := 1.0 / rd;
+
+    tbot := (bmin - ro) * inv;
+    ttop := (bmax - ro) * inv;
+
+    tmin := min(ttop, tbot);
+    tmax := max(ttop, tbot);
+
+    res: Intersect_Result;
+    res.t0 = max(max(tmin.x, tmin.y), tmin.z);
+    res.t1 = min(min(tmax.x, tmax.y), tmax.z);
+    res.hit = res.t1 > max(res.t0, 0);
+    return res;
+}
+
+frag :: #fragment (input: Vert_Output, data: ^Frag_Data @data) -> vec4 @io(0)
+{
+    ray_origin := input.world_pos;
+
+    ray_dir := normalize(input.world_pos - data.camera_pos);
+
+    bmin := vec3(-0.5, -0.5, -0.5);
+    bmax := vec3( 0.5,  0.5,  0.5);
+
+    intersect_res := intersect_aabb(ray_origin, ray_dir, bmin, bmax);
+    if !intersect_res.hit
+    {
+        return vec4(0, 0, 0, 1);
+    }
+
+    t0 := intersect_res.t0;
+    t1 := intersect_res.t1;
+    t0 = max(t0, 0.0);
+
+    STEPS := 64;
+    step_size := (t1 - t0) / float(STEPS);
+
+    col := vec3(0);
+    alpha := 0.0;
+
+    t := t0;
+
+    for i := 0; i < STEPS; i += 1
+    {
+        p := ray_origin + ray_dir * t;
+
+        // Transform to [0, 1]
+        uvw := p + 0.5;
+
+        // Sample density
+        density := texture_sample_3d(data.cloud_texture, data.cloud_sampler, uvw);
+
+        // Absorption
+        d := density * step_size * 2;
+
+        // Compositing
+        a := (1 - alpha) * d.a;
+        alpha += a;
+        col += density.rgb * a;
+
+        if alpha > 0.95 { break; }
+        t += step_size;
+    }
+
+    return vec4(col, alpha);
+}

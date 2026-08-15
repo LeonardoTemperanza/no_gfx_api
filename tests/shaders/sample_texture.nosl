@@ -26,14 +26,11 @@ vert :: #vertex (vert_id: uint @vert_id, data: ^Vert_Data @data) -> Vert_Output
 
 Frag_Data :: struct
 {
-    texture_a: texture_id,
-    texture_b: texture_id,
+    tex: texture_id,
     s: sampler_id,
-    fade: float,
 }
 
 frag :: #fragment (input: Vert_Output, data: ^Frag_Data @data) -> vec4 @io(0)
 {
-    uv := input.uv;
-    return mix(texture_sample(data.texture_a, data.s, uv), texture_sample(data.texture_b, data.s, uv), vec4(data.fade));
+    return texture_sample(data.tex, data.s, input.uv);
 }

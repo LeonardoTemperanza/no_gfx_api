@@ -1,0 +1,39 @@
+
+Vert_Data :: struct
+{
+    positions: []vec3,
+    world_to_view: mat4,
+    view_to_proj: mat4,
+}
+
+Vert_Output :: struct
+{
+    pos: vec4 @position,
+    dir: vec3 @io(0),
+}
+
+vert :: #vertex (vert_id: uint @vert_id, data: ^Vert_Data @data) -> Vert_Output
+{
+    clip_pos := vec4(data.positions[vert_id].xyz, 1);
+    clip_pos = vec4(mat3(data.world_to_view) * clip_pos.xyz, 1);
+    clip_pos = data.view_to_proj * clip_pos;
+    clip_pos.y = -clip_pos.y;
+
+    out: Vert_Output;
+    out.pos = clip_pos;
+    out.dir = normalize(data.positions[vert_id].xyz);
+    return out;
+}
+
+Frag_Data :: struct
+{
+    sky_texture: texture_id,
+    sky_sampler: sampler_id,
+}
+
+frag :: #fragment (input: Vert_Output, data: ^Frag_Data @data) -> vec4 @io(0)
+{
+    frag_dir := normalize(input.dir);
+    sky_color := texture_sample_cube(data.sky_texture, data.sky_sampler, frag_dir).rgb;
+    return vec4(sky_color, 1.0);
+}
