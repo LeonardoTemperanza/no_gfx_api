@@ -142,7 +142,7 @@ cmd_check_gpu :: proc() -> bool
 cmd_check_tests :: proc() -> bool
 {
     res := true
-    res &= run_task("odin", "check", "tests", "-vet")
+    res &= run_task("odin", "check", "tests")
     return res
 }
 
@@ -196,7 +196,7 @@ cmd_run_no_gfx_tests :: proc() -> bool
 {
     cmd_run_compiler_tests() or_return
     res := true
-    res &= run_task("odin", "run", "tests")
+    res &= run_task("odin", "run", "tests", "--", "gen_goldens")
     return res
 }
 

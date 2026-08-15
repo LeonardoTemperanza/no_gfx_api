@@ -1,0 +1,36 @@
+
+Vertex :: struct
+{
+    pos: vec3,
+    uv: vec2,
+}
+
+Vert_Data :: struct
+{
+    verts: []Vertex,
+}
+
+Vert_Output :: struct
+{
+    pos: vec4 @position,
+    uv: vec2 @io(0),
+}
+
+vert :: #vertex (vert_id: uint @vert_id, data: ^Vert_Data @data) -> Vert_Output
+{
+    out: Vert_Output;
+    out.pos = vec4(data.verts[vert_id].pos.xyz, 1.0);
+    out.uv = data.verts[vert_id].uv;
+    return out;
+}
+
+Frag_Data :: struct
+{
+    texture: texture_id,
+    sampler: sampler_id,
+}
+
+frag :: #fragment (input: Vert_Output, data: ^Frag_Data @data) -> vec4 @io(0)
+{
+    return texture_sample(data.texture, data.sampler, input.uv);
+}
