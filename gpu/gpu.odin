@@ -153,6 +153,7 @@ Sampler_Desc :: struct
     min_lod: f32,
     max_lod: f32,  // 0.0 = use all lods
     max_anisotropy: f32,
+    compare_op: Compare_Op,  // Used for comparison/shadow sampling
 }
 
 Texture_View_Desc :: struct
@@ -572,7 +573,7 @@ Arena_Block :: struct
     size: i64,
 }
 
-arena_create :: proc(#any_int block_size: i64 = 4*1024*1024, mem_type := Memory.Default) -> Arena
+arena_create :: proc(#any_int block_size: i64 = 4*1024*1024, mem_type := Memory.Default, loc := #caller_location) -> Arena
 {
     assert(block_size > 0, "block_size must be positive")
 
@@ -580,7 +581,7 @@ arena_create :: proc(#any_int block_size: i64 = 4*1024*1024, mem_type := Memory.
     res.block_size = block_size
     res.mem_type = mem_type
     first_block := Arena_Block {
-        p = mem_alloc_raw(block_size, 1, 16, mem_type = mem_type),
+        p = mem_alloc_raw(block_size, 1, 16, mem_type = mem_type, loc = loc),
         size = block_size,
     }
     append(&res.blocks, first_block)
@@ -594,20 +595,22 @@ arena_alloc_raw :: proc(arena: ^Arena, #any_int el_size: i64, #any_int el_count:
     bytes := el_size * el_count
     assert(bytes >= 0 && align > 0)
 
+    align_cleaned := max(16, align)
+
     if bytes == 0 do return {}
 
     block := arena.blocks[arena.block_idx]
 
     // If we request an alignment of > 16 and cpu/gpu are only aligned to 16,
     // it's impossible to find the same offset for both.
-    if block.p.cpu != nil && uintptr(block.p.cpu) % uintptr(align) != uintptr(block.p.gpu.ptr) % uintptr(align) {
+    if block.p.cpu != nil && uintptr(block.p.cpu) % uintptr(align_cleaned) != uintptr(block.p.gpu.ptr) % uintptr(align_cleaned) {
         panic("Could not satisfy alignment requirements in GPU arena allocation.")
     }
 
     gpu_addr := uintptr(block.p.gpu.ptr) + uintptr(arena.offset)
-    arena.offset = i64(align_up(u64(gpu_addr), u64(align)) - u64(uintptr(block.p.gpu.ptr)))
+    arena.offset = i64(align_up(u64(gpu_addr), u64(align_cleaned)) - u64(uintptr(block.p.gpu.ptr)))
     if arena.offset + bytes > block.size {
-        block = arena_next_block(arena, bytes, align)
+        block = arena_next_block(arena, bytes, align_cleaned)
         arena.offset = 0
     }
 
@@ -672,10 +675,10 @@ arena_free_all :: proc(arena: ^Arena)
     arena.block_idx = 0
 }
 
-arena_destroy :: proc(arena: ^Arena)
+arena_destroy :: proc(arena: ^Arena, loc := #caller_location)
 {
     for block in arena.blocks {
-        mem_free_raw(block.p.gpu)
+        mem_free_raw(block.p.gpu, loc = loc)
     }
     delete(arena.blocks)
     arena^ = {}
@@ -689,7 +692,7 @@ Owned_Texture :: struct
 
 texture_alloc_and_create :: proc(desc: Texture_Desc, queue: Queue = nil, signal_sem: Semaphore = {}, signal_value: u64 = 0, name := "", loc := #caller_location) -> Owned_Texture
 {
-    size, align := texture_size_and_align(desc)
+    size, align := texture_size_and_align(desc, loc = loc)
     ptr := mem_alloc_raw(size, 1, align, .GPU, loc = loc)
     texture := texture_create(desc, ptr, queue, signal_sem, signal_value, name = name, loc = loc)
     return Owned_Texture { texture, ptr.gpu }
@@ -874,7 +877,7 @@ desc_pool_destroy :: proc(pool: ^Descriptor_Pool, loc := #caller_location)
     desc_pool_resource_destroy(&pool.texture_rw_pool)
     desc_pool_resource_destroy(&pool.sampler_pool)
     desc_pool_resource_destroy(&pool.bvh_pool)
-    desc_heap_destroy(pool.heap)
+    desc_heap_destroy(pool.heap, loc = loc)
     pool^ = {}
 }
 
