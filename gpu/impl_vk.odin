@@ -2756,9 +2756,9 @@ _cmd_begin_render_pass :: proc(cmd_buf: Command_Buffer, desc: Render_Pass_Desc, 
     if len(desc.color_attachments) > 0 {
         first_valid_attachment = desc.color_attachments[0]
     } else if desc.depth_attachment != nil {
-        first_valid_attachment = desc.depth_attachment
+        first_valid_attachment = desc.depth_attachment.?
     } else if desc.stencil_attachment != nil {
-        first_valid_attachment = desc.stencil_attachment
+        first_valid_attachment = desc.stencil_attachment.?
     }
 
     width, height := desc.render_area_size.x, desc.render_area_size.y
