@@ -186,6 +186,45 @@ ray_scene_intersection :: (ray: Ray, tlas_id: bvh_id, scene: Scene) -> Hit_Info
     return hit_info;
 }
 
+intersect_sphere :: (ray: Ray, hit_info: Hit_Info, pos: vec3, radius: float) -> Hit_Info
+{
+    t0: float; // Solutions for t if the ray intersects the sphere
+    t1: float;
+
+    L := pos - ray.ori;
+    tca := dot(L, ray.dir);
+    // if (tca < 0) return false;
+    d2 := dot(L, L) - tca * tca;
+    if d2 > radius * radius { return hit_info; }
+    thc := sqrt(radius * radius - d2);
+    t0 = tca - thc;
+    t1 = tca + thc;
+
+    if (t0 > t1)
+    {
+        tmp := t0;
+        t0 = t1;
+        t1 = tmp;
+    }
+
+    if (t0 < 0)
+    {
+        t0 = t1; // If t0 is negative, let's use t1 instead.
+        if t0 < 0 { return hit_info; } // Both t0 and t1 are negative.
+    }
+
+    t := t0;
+
+    if !hit_info.hit || t < hit_info.t {
+        hit_info.hit = true;
+        hit_info.t = t;
+        hit_point := ray.ori + ray.dir * hit_info.t;
+        hit_info.normal = normalize(hit_point - pos);
+    }
+
+    return hit_info;
+}
+
 // RNG
 
 pi: float = 3.1415;

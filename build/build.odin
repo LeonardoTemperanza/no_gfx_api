@@ -28,7 +28,9 @@ COMMANDS := []Command {
     { "shaders_nosl", cmd_shaders_nosl },
     { "shaders_slang", cmd_shaders_slang },
     { "run_compiler_tests", cmd_run_compiler_tests },
-    { "run_all_tests", cmd_run_all_tests }
+    { "tests_gen_local_goldens", cmd_tests_gen_local_goldens },
+    { "tests_compare_local_goldens", cmd_tests_compare_local_goldens },
+    { "tests_compare_global_goldens", cmd_tests_compare_global_goldens }
 }
 
 Example :: struct
@@ -192,11 +194,27 @@ cmd_run_compiler_tests :: proc() -> bool
     return res
 }
 
-cmd_run_all_tests :: proc() -> bool
+cmd_tests_gen_local_goldens :: proc() -> bool
 {
     cmd_run_compiler_tests() or_return
     res := true
     res &= run_task("odin", "run", "tests", "--", "gen_local_goldens")
+    return res
+}
+
+cmd_tests_compare_local_goldens :: proc() -> bool
+{
+    cmd_run_compiler_tests() or_return
+    res := true
+    res &= run_task("odin", "run", "tests", "--", "compare_to_local")
+    return res
+}
+
+cmd_tests_compare_global_goldens :: proc() -> bool
+{
+    cmd_run_compiler_tests() or_return
+    res := true
+    res &= run_task("odin", "run", "tests", "--", "compare_to_global")
     return res
 }
 
