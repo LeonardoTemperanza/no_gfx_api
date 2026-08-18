@@ -8,26 +8,43 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
       - name: Install Odin
         uses: laytan/setup-odin@v2
         with:
           release: dev-2026-06
 
-      - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1
+      - name: Install Vulkan SDK + Lavapipe
+        uses: jakoch/install-vulkan-sdk-action@v1.6.0
         with:
           vulkan_version: 1.4.350.0
           optional_components: com.lunarg.vulkan.vma
-          install_runtime: true
           cache: true
           stripdown: true
 
           install_swiftshader: false
           install_lavapipe: true
 
+      - name: Record environment
+        run: |
+          echo "=== Runner ==="
+          echo "ImageOS=$ImageOS"
+          echo "ImageVersion=$ImageVersion"
+          uname -a
+
+          echo "=== Odin ==="
+          odin version
+
+          echo "=== Vulkan ==="
+          vulkaninfo --summary || true
+
+          echo "=== Vulkan driver ==="
+          vulkaninfo | grep -E \
+            'deviceName|driverName|driverInfo|driverVersion|apiVersion' \
+            || true
+
       - name: Run Tests
-        run: odin run build -- tests_gen_local_goldens is_gh_actions
+        run: odin run build -- tests_gen_local_goldens_gh_actions
 
       - name: Upload golden images
         uses: actions/upload-artifact@v4

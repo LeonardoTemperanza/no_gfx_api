@@ -30,7 +30,8 @@ COMMANDS := []Command {
     { "run_compiler_tests", cmd_run_compiler_tests },
     { "tests_gen_local_goldens", cmd_tests_gen_local_goldens },
     { "tests_compare_local_goldens", cmd_tests_compare_local_goldens },
-    { "tests_compare_global_goldens", cmd_tests_compare_global_goldens }
+    { "tests_compare_global_goldens", cmd_tests_compare_global_goldens },              // Only to be used in GitHub Actions
+    { "tests_gen_local_goldens_gh_actions", cmd_tests_gen_local_goldens_gh_actions },  // Only to be used in GitHub Actions
 }
 
 Example :: struct
@@ -215,6 +216,14 @@ cmd_tests_compare_global_goldens :: proc() -> bool
     cmd_run_compiler_tests() or_return
     res := true
     res &= run_task("odin", "run", "tests", "--", "compare_to_global")
+    return res
+}
+
+cmd_tests_gen_local_goldens_gh_actions :: proc() -> bool
+{
+    cmd_run_compiler_tests() or_return
+    res := true
+    res &= run_task("odin", "run", "tests", "--", "gen_local_goldens", "is_gh_actions")
     return res
 }
 
