@@ -27,8 +27,6 @@ jobs:
           install_lavapipe: true
 
       - name: Run Tests
-        #env:
-        #  VK_ICD_FILENAMES: C:\lavapipe\share\vulkan\icd.d\lvp_icd.x86_64.json
         run: odin run build -- tests_gen_local_goldens is_gh_actions
 
       - name: Upload golden images
@@ -36,9 +34,3 @@ jobs:
         with:
           name: golden-images
           path: tests/goldens_local/
-
-      #- run: ./render_tests --output golden-images/
-      #- uses: actions/upload-artifact@v4
-      #  with:
-      #    name: golden-images
-      #    path: golden-images

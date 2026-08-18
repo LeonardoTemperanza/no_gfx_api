@@ -99,7 +99,7 @@ main :: proc()
         }
 
         // NOTE: Lavapipe claims to support RT but segfaults, sooo.....
-        if is_gh_actions && test.required_features & .Raytracing
+        if is_gh_actions && .Raytracing in test.required_features
         {
             fmt.printfln("Using CPU Vulkan Implementation and test requires HW RT. Skipping.")
             continue
