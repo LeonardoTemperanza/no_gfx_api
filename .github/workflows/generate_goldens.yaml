@@ -23,7 +23,7 @@ jobs:
           stripdown: true
 
           install_swiftshader: true
-          #install_lavapipe: true
+          install_lavapipe: false
       - name: Run Tests
         #env:
         #  VK_ICD_FILENAMES: C:\lavapipe\share\vulkan\icd.d\lvp_icd.x86_64.json
