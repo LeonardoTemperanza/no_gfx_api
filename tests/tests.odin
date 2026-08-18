@@ -85,8 +85,6 @@ main :: proc()
     {
         test_id := idx + 1
 
-        fmt.println(gpu.features_available())
-
         // NOTE: Lavapipe claims to support RT but segfaults, sooo.....
         if is_gh_actions && .Raytracing in test.required_features
         {

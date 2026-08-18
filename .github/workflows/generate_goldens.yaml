@@ -25,7 +25,7 @@ jobs:
           cache: true
           stripdown: true
 
-          # We install our own pinned Lavapipe below.
+          # Lavapipe is installed manually below so its version is pinned.
           install_swiftshader: false
           install_lavapipe: false
 
@@ -36,12 +36,15 @@ jobs:
           $zip = "$env:RUNNER_TEMP\lavapipe.zip"
           $dest = "C:\lavapipe"
 
-          Write-Host "Downloading Lavapipe..."
+          Write-Host "Downloading pinned Lavapipe..."
           Invoke-WebRequest -Uri $url -OutFile $zip
 
           Write-Host "Extracting Lavapipe..."
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
           Expand-Archive -Path $zip -DestinationPath $dest -Force
+
+          Write-Host "=== Lavapipe files ==="
+          Get-ChildItem $dest -Recurse
 
       - name: Register pinned Lavapipe
         shell: pwsh
@@ -56,6 +59,9 @@ jobs:
 
           $icdPath = $icd.FullName
 
+          Write-Host "Registering Lavapipe ICD:"
+          Write-Host $icdPath
+
           New-Item `
             -Path "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers" `
             -Force | Out-Null
@@ -69,33 +75,45 @@ jobs:
 
           "LAVAPIPE_ICD=$icdPath" >> $env:GITHUB_ENV
 
-      - name: Locate validation layers
+      - name: Register Vulkan validation layer
         shell: pwsh
         run: |
           Write-Host "VULKAN_SDK=$env:VULKAN_SDK"
 
           $validation = Get-ChildItem $env:VULKAN_SDK -Recurse `
-            -Filter "VK_LAYER_KHRONOS_validation.json" |
+            -Filter "VkLayer_khronos_validation.json" |
             Select-Object -First 1
 
           if (-not $validation) {
-            Write-Host "Validation layer manifest not found."
-            Write-Host "Searching SDK for layer files..."
-
-            Get-ChildItem $env:VULKAN_SDK -Recurse `
-              -Filter "*validation*"
-
-            throw "VK_LAYER_KHRONOS_validation.json was not installed"
+            throw "VkLayer_khronos_validation.json was not installed"
           }
 
-          $layerPath = Split-Path $validation.FullName
+          $manifest = $validation.FullName
+          $layerDir = Split-Path $manifest
+          $dll = Join-Path $layerDir "VkLayer_khronos_validation.dll"
 
-          Write-Host "Validation layer manifest:"
-          Write-Host $validation.FullName
+          if (-not (Test-Path $dll)) {
+            throw "Validation layer DLL was not found: $dll"
+          }
 
-          Write-Host "VK_LAYER_PATH=$layerPath"
+          Write-Host "Registering validation layer:"
+          Write-Host $manifest
 
-          "VK_LAYER_PATH=$layerPath" >> $env:GITHUB_ENV
+          Write-Host "Validation DLL:"
+          Write-Host $dll
+
+          New-Item `
+            -Path "HKLM:\SOFTWARE\Khronos\Vulkan\ExplicitLayers" `
+            -Force | Out-Null
+
+          New-ItemProperty `
+            -Path "HKLM:\SOFTWARE\Khronos\Vulkan\ExplicitLayers" `
+            -Name $manifest `
+            -PropertyType DWord `
+            -Value 0 `
+            -Force | Out-Null
+
+          "VALIDATION_LAYER_MANIFEST=$manifest" >> $env:GITHUB_ENV
 
       - name: Verify Vulkan
         shell: pwsh
@@ -104,41 +122,88 @@ jobs:
           Write-Host "ImageOS=$env:ImageOS"
           Write-Host "ImageVersion=$env:ImageVersion"
 
+          Write-Host ""
           Write-Host "=== Odin ==="
           odin version
 
+          Write-Host ""
           Write-Host "=== Vulkan SDK ==="
           Write-Host "VULKAN_SDK=$env:VULKAN_SDK"
-          Write-Host "VK_LAYER_PATH=$env:VK_LAYER_PATH"
 
+          Write-Host ""
+          Write-Host "=== Lavapipe ICD ==="
+          Write-Host $env:LAVAPIPE_ICD
+          Get-Content $env:LAVAPIPE_ICD
+
+          $icdDir = Split-Path $env:LAVAPIPE_ICD
+          $lavapipeDll = Join-Path `
+            $icdDir `
+            "..\..\..\bin\vulkan_lvp.dll"
+
+          $lavapipeDll = [System.IO.Path]::GetFullPath($lavapipeDll)
+
+          if (-not (Test-Path $lavapipeDll)) {
+            throw "Missing Lavapipe DLL: $lavapipeDll"
+          }
+
+          Write-Host "Lavapipe DLL:"
+          Write-Host $lavapipeDll
+
+          Write-Host ""
           Write-Host "=== Validation layer ==="
-          Get-ChildItem $env:VK_LAYER_PATH
+          Write-Host $env:VALIDATION_LAYER_MANIFEST
+          Get-Content $env:VALIDATION_LAYER_MANIFEST
+
+          Write-Host ""
+          Write-Host "=== Registered Vulkan drivers ==="
+          Get-ItemProperty `
+            "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers"
+
+          Write-Host ""
+          Write-Host "=== Registered Vulkan explicit layers ==="
+          Get-ItemProperty `
+            "HKLM:\SOFTWARE\Khronos\Vulkan\ExplicitLayers"
+
+          Write-Host ""
+          Write-Host "=== VulkanInfo ==="
 
           $vulkanInfo = Join-Path `
             $env:VULKAN_SDK `
             "Bin\vulkaninfoSDK.exe"
 
           if (-not (Test-Path $vulkanInfo)) {
+            Write-Host "Searching for vulkaninfo..."
+            Get-ChildItem `
+              $env:VULKAN_SDK `
+              -Recurse `
+              -Filter "*vulkaninfo*"
+
             throw "Could not find vulkaninfoSDK.exe"
           }
 
-          Write-Host "=== Vulkan summary ==="
           & $vulkanInfo --summary
 
+          Write-Host ""
           Write-Host "=== Vulkan driver ==="
+
           & $vulkanInfo |
             Select-String `
               'deviceName|driverName|driverInfo|driverVersion|apiVersion'
 
-          Write-Host "=== Vulkan layers ==="
-          & $vulkanInfo |
-            Select-String `
-              'VK_LAYER_KHRONOS_validation'
+          Write-Host ""
+          Write-Host "=== Vulkan validation layer ==="
+
+          $layerOutput = & $vulkanInfo |
+            Select-String 'VK_LAYER_KHRONOS_validation'
+
+          if (-not $layerOutput) {
+            throw "VK_LAYER_KHRONOS_validation is not visible to Vulkan"
+          }
+
+          $layerOutput
 
       - name: Run Tests
         shell: pwsh
-        env:
-          VK_LAYER_PATH: ${{ env.VK_LAYER_PATH }}
         run: |
           odin run build -- tests_gen_local_goldens_gh_actions
 
