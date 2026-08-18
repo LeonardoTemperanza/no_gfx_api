@@ -1,0 +1,169 @@
+name: Test Goldens
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-goldens:
+    runs-on: windows-2025
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.3.1
+
+      - name: Install Odin
+        uses: laytan/setup-odin@v2
+        with:
+          release: dev-2026-06
+
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1.6.0
+        with:
+          vulkan_version: 1.4.350.0
+          optional_components: com.lunarg.vulkan.vma
+          install_runtime: true
+          cache: true
+          stripdown: true
+
+          # Lavapipe is installed manually below so its version is pinned.
+          install_swiftshader: false
+          install_lavapipe: false
+
+      - name: Install pinned Lavapipe 26.1.5
+        shell: pwsh
+        run: |
+          $url = "https://github.com/jakoch/rasterizers/releases/download/20260730/lavapipe-x64-26.1.5.zip"
+          $zip = "$env:RUNNER_TEMP\lavapipe.zip"
+          $dest = "C:\lavapipe"
+
+          Write-Host "Downloading pinned Lavapipe..."
+          Invoke-WebRequest -Uri $url -OutFile $zip
+
+          Write-Host "Extracting Lavapipe..."
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+
+      - name: Register pinned Lavapipe
+        shell: pwsh
+        run: |
+          $icd = Get-ChildItem C:\lavapipe -Recurse `
+            -Filter "lvp_icd.x86_64.json" |
+            Select-Object -First 1
+
+          if (-not $icd) {
+            throw "Could not find lvp_icd.x86_64.json"
+          }
+
+          $icdPath = $icd.FullName
+
+          Write-Host "Registering Lavapipe ICD:"
+          Write-Host $icdPath
+
+          New-Item `
+            -Path "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers" `
+            -Force | Out-Null
+
+          New-ItemProperty `
+            -Path "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers" `
+            -Name $icdPath `
+            -PropertyType DWord `
+            -Value 0 `
+            -Force | Out-Null
+
+          "LAVAPIPE_ICD=$icdPath" >> $env:GITHUB_ENV
+
+      - name: Register Vulkan validation layer
+        shell: pwsh
+        run: |
+          Write-Host "VULKAN_SDK=$env:VULKAN_SDK"
+
+          $validation = Get-ChildItem $env:VULKAN_SDK -Recurse `
+            -Filter "VkLayer_khronos_validation.json" |
+            Select-Object -First 1
+
+          if (-not $validation) {
+            throw "VkLayer_khronos_validation.json was not installed"
+          }
+
+          $manifest = $validation.FullName
+          $layerDir = Split-Path $manifest
+          $dll = Join-Path $layerDir "VkLayer_khronos_validation.dll"
+
+          if (-not (Test-Path $dll)) {
+            throw "Validation layer DLL was not found: $dll"
+          }
+
+          Write-Host "Registering validation layer:"
+          Write-Host $manifest
+
+          New-Item `
+            -Path "HKLM:\SOFTWARE\Khronos\Vulkan\ExplicitLayers" `
+            -Force | Out-Null
+
+          New-ItemProperty `
+            -Path "HKLM:\SOFTWARE\Khronos\Vulkan\ExplicitLayers" `
+            -Name $manifest `
+            -PropertyType DWord `
+            -Value 0 `
+            -Force | Out-Null
+
+          "VALIDATION_LAYER_MANIFEST=$manifest" >> $env:GITHUB_ENV
+
+      - name: Verify Vulkan
+        shell: pwsh
+        run: |
+          Write-Host "=== Runner ==="
+          Write-Host "ImageOS=$env:ImageOS"
+          Write-Host "ImageVersion=$env:ImageVersion"
+
+          Write-Host ""
+          Write-Host "=== Odin ==="
+          odin version
+
+          Write-Host ""
+          Write-Host "=== Vulkan SDK ==="
+          Write-Host "VULKAN_SDK=$env:VULKAN_SDK"
+
+          Write-Host ""
+          Write-Host "=== Lavapipe ICD ==="
+          Write-Host $env:LAVAPIPE_ICD
+          Get-Content $env:LAVAPIPE_ICD
+
+          Write-Host ""
+          Write-Host "=== VulkanInfo ==="
+
+          $vulkanInfo = Join-Path `
+            $env:VULKAN_SDK `
+            "Bin\vulkaninfoSDK.exe"
+
+          if (-not (Test-Path $vulkanInfo)) {
+            throw "Could not find vulkaninfoSDK.exe"
+          }
+
+          & $vulkanInfo --summary
+
+          Write-Host ""
+          Write-Host "=== Vulkan driver ==="
+
+          & $vulkanInfo |
+            Select-String `
+              'deviceName|driverName|driverInfo|driverVersion|apiVersion'
+
+          Write-Host ""
+          Write-Host "=== Vulkan validation layer ==="
+
+          $layerOutput = & $vulkanInfo |
+            Select-String 'VK_LAYER_KHRONOS_validation'
+
+          if (-not $layerOutput) {
+            throw "VK_LAYER_KHRONOS_validation is not visible to Vulkan"
+          }
+
+          $layerOutput
+
+      - name: Compare against committed goldens
+        shell: pwsh
+        run: |
+          odin run build -- tests_compare_global_goldens
