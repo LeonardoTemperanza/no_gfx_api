@@ -69,9 +69,9 @@ main :: proc()
         }
     }
 
-    console_logger := log.create_console_logger()
-    defer log.destroy_console_logger(console_logger)
-    context.logger = console_logger
+    test_logger := create_test_logger()
+    defer destroy_test_logger(test_logger)
+    context.logger = test_logger
 
     ok := gpu.init()
     ensure(ok)
@@ -154,6 +154,10 @@ main :: proc()
     }
 
     if program_return != 0 do os.exit(1)
+    if VALIDATION_ERRORS_OCCURRED {
+        fmt.println("Validation errors occurred!")
+        os.exit(1)
+    }
 }
 
 test_triangle :: proc(target: Render_Target)
@@ -1680,4 +1684,27 @@ compare_to_golden :: proc(target: Render_Target, path: string) -> bool
         is_same &= readback.cpu[i+2] == golden.pixels.buf[j+2]
     }
     return is_same
+}
+
+create_test_logger :: proc(lowest := log.Level.Debug, opt := log.Default_Console_Logger_Opts, ident := "", allocator := context.allocator) -> log.Logger
+{
+    data := new(log.File_Console_Logger_Data, allocator)
+    data.file_handle = nil
+    data.ident = ident
+    return log.Logger{test_logger_proc, data, lowest, opt}
+}
+
+destroy_test_logger :: proc(logger: log.Logger, allocator := context.allocator)
+{
+	free(logger.data, allocator)
+}
+
+VALIDATION_ERRORS_OCCURRED := false
+
+test_logger_proc :: proc(logger_data: rawptr, level: log.Level, text: string, options: log.Options, location := #caller_location)
+{
+    if level >= log.Level.Error {
+        intr.atomic_store(&VALIDATION_ERRORS_OCCURRED, true)
+    }
+    log.console_logger_proc(logger_data, level, text, options, location)
 }
