@@ -114,6 +114,7 @@ main :: proc()
             case .Gen_Local_Goldens:
             {
                 save_target_color(target, compare_path_local)
+                fmt.printfln("Generated %v.", test.name)
             }
             case .Compare_To_Local:
             {

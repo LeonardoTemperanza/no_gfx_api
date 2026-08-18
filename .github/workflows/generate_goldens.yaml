@@ -13,6 +13,7 @@ jobs:
         uses: laytan/setup-odin@v2
         with:
           release: dev-2026-06
+
       - name: Install Vulkan SDK
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
@@ -22,12 +23,14 @@ jobs:
           cache: true
           stripdown: true
 
-          install_swiftshader: true
-          install_lavapipe: false
+          install_swiftshader: false
+          install_lavapipe: true
+
       - name: Run Tests
         #env:
         #  VK_ICD_FILENAMES: C:\lavapipe\share\vulkan\icd.d\lvp_icd.x86_64.json
         run: odin run build -- tests_gen_local_goldens
+
       - name: Upload golden images
         uses: actions/upload-artifact@v4
         with:
