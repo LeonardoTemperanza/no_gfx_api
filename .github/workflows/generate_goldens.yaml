@@ -36,17 +36,12 @@ jobs:
           $zip = "$env:RUNNER_TEMP\lavapipe.zip"
           $dest = "C:\lavapipe"
 
-          Write-Host "Downloading Lavapipe 26.1.5..."
           Invoke-WebRequest -Uri $url -OutFile $zip
 
-          Write-Host "Extracting to $dest..."
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
           Expand-Archive -Path $zip -DestinationPath $dest -Force
 
-          Write-Host "=== Lavapipe contents ==="
-          Get-ChildItem $dest -Recurse
-
-      - name: Find Lavapipe ICD
+      - name: Register pinned Lavapipe
         shell: pwsh
         run: |
           $icd = Get-ChildItem C:\lavapipe -Recurse `
@@ -57,31 +52,26 @@ jobs:
             throw "Could not find lvp_icd.x86_64.json"
           }
 
-          Write-Host "Lavapipe ICD: $($icd.FullName)"
+          $icdPath = $icd.FullName
 
-          # Make it available to subsequent workflow steps.
-          "LAVAPIPE_ICD=$($icd.FullName)" >> $env:GITHUB_ENV
+          New-Item `
+            -Path "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers" `
+            -Force | Out-Null
 
-      - name: Record environment
+          New-ItemProperty `
+            -Path "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers" `
+            -Name $icdPath `
+            -PropertyType DWord `
+            -Value 0 `
+            -Force | Out-Null
+
+          "LAVAPIPE_ICD=$icdPath" >> $env:GITHUB_ENV
+
+      - name: Verify Vulkan
         shell: pwsh
-        env:
-          VK_DRIVER_FILES: ${{ env.LAVAPIPE_ICD }}
         run: |
-          Write-Host "=== Runner ==="
-          Write-Host "ImageOS=$env:ImageOS"
-          Write-Host "ImageVersion=$env:ImageVersion"
-
-          Write-Host "=== Odin ==="
-          odin version
-
-          Write-Host "=== Lavapipe ICD ==="
-          Write-Host $env:VK_DRIVER_FILES
-          Get-Content $env:VK_DRIVER_FILES
-
-          Write-Host "=== Vulkan ==="
           vulkaninfo --summary
 
-          Write-Host "=== Vulkan driver ==="
           vulkaninfo |
             Select-String 'deviceName|driverName|driverInfo|driverVersion|apiVersion'
 
