@@ -36,7 +36,7 @@ tests := []Test {
     { "comparison_sampler", test_comparison_sampler, {}},
     { "sw_pathtracing", test_sw_pathtracing, {}},  // Test a complex shader. Scene is hardcoded in the shader, HW RT is not used.
                                                    // This is useful because CPU implementations of Vulkan usually don't support HW RT.
-    //{ "hw_pathtracing", test_hw_pathtracing, { .Raytracing }},
+    { "hw_pathtracing", test_hw_pathtracing, { .Raytracing }},
 }
 
 Operation_Mode :: enum
@@ -52,14 +52,20 @@ main :: proc()
     cmd_args := os.args
 
     op_mode := Operation_Mode.Compare_To_Global
+    is_gh_actions := false
     if len(cmd_args) > 1
     {
-        if cmd_args[1] == "gen_local_goldens" {
-            op_mode = .Gen_Local_Goldens
-        } else if cmd_args[1] == "compare_to_local" {
-            op_mode = .Compare_To_Local
-        } else if cmd_args[1] == "compare_to_global" {
-            op_mode = .Compare_To_Global
+        for cmd_arg in cmd_args
+        {
+            if cmd_arg == "gen_local_goldens" {
+                op_mode = .Gen_Local_Goldens
+            } else if cmd_arg == "compare_to_local" {
+                op_mode = .Compare_To_Local
+            } else if cmd_arg == "compare_to_global" {
+                op_mode = .Compare_To_Global
+            } else if cmd_arg == "is_gh_actions" {
+                is_gh_actions = true
+            }
         }
     }
 
@@ -90,6 +96,13 @@ main :: proc()
             gpu.cmd_end_render_pass(cmd_buf)
             gpu.queue_submit(.Main, { cmd_buf })
             gpu.wait_idle()
+        }
+
+        // NOTE: Lavapipe claims to support RT but segfaults, sooo.....
+        if is_gh_actions && test.required_features & .Raytracing
+        {
+            fmt.printfln("Using CPU Vulkan Implementation and test requires HW RT. Skipping.")
+            continue
         }
 
         if test.required_features & gpu.features_available() != test.required_features
