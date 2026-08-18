@@ -36,10 +36,15 @@ jobs:
           $zip = "$env:RUNNER_TEMP\lavapipe.zip"
           $dest = "C:\lavapipe"
 
+          Write-Host "Downloading Lavapipe..."
           Invoke-WebRequest -Uri $url -OutFile $zip
 
+          Write-Host "Extracting Lavapipe..."
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
           Expand-Archive -Path $zip -DestinationPath $dest -Force
+
+          Write-Host "=== Lavapipe files ==="
+          Get-ChildItem $dest -Recurse
 
       - name: Register pinned Lavapipe
         shell: pwsh
@@ -53,6 +58,9 @@ jobs:
           }
 
           $icdPath = $icd.FullName
+
+          Write-Host "Registering Vulkan ICD:"
+          Write-Host $icdPath
 
           New-Item `
             -Path "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers" `
@@ -70,15 +78,69 @@ jobs:
       - name: Verify Vulkan
         shell: pwsh
         run: |
-          vulkaninfo --summary
+          Write-Host "=== Runner ==="
+          Write-Host "ImageOS=$env:ImageOS"
+          Write-Host "ImageVersion=$env:ImageVersion"
 
-          vulkaninfo |
-            Select-String 'deviceName|driverName|driverInfo|driverVersion|apiVersion'
+          Write-Host "=== Odin ==="
+          odin version
+
+          Write-Host "=== Lavapipe ==="
+
+          $icd = $env:LAVAPIPE_ICD
+
+          if (-not (Test-Path $icd)) {
+            throw "Missing Lavapipe ICD: $icd"
+          }
+
+          Write-Host "ICD:"
+          Write-Host $icd
+          Get-Content $icd
+
+          $icdDir = Split-Path $icd
+          $dll = Join-Path $icdDir "..\..\..\bin\vulkan_lvp.dll"
+          $dll = [System.IO.Path]::GetFullPath($dll)
+
+          if (-not (Test-Path $dll)) {
+            throw "Missing Lavapipe DLL: $dll"
+          }
+
+          Write-Host "Driver DLL:"
+          Write-Host $dll
+
+          Write-Host "=== Registered Vulkan drivers ==="
+          Get-ItemProperty `
+            "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers"
+
+          Write-Host "=== Vulkan SDK ==="
+          Write-Host "VULKAN_SDK=$env:VULKAN_SDK"
+
+          $vulkanInfo = Join-Path `
+            $env:VULKAN_SDK `
+            "Bin\vulkaninfoSDK.exe"
+
+          if (-not (Test-Path $vulkanInfo)) {
+            Write-Host "Could not find expected vulkaninfoSDK.exe."
+            Write-Host "Searching Vulkan SDK..."
+
+            Get-ChildItem `
+              $env:VULKAN_SDK `
+              -Recurse `
+              -Filter "*vulkaninfo*"
+
+            throw "Could not find vulkaninfoSDK.exe"
+          }
+
+          Write-Host "=== Vulkan ==="
+          & $vulkanInfo --summary
+
+          Write-Host "=== Vulkan driver ==="
+          & $vulkanInfo |
+            Select-String `
+              'deviceName|driverName|driverInfo|driverVersion|apiVersion'
 
       - name: Run Tests
         shell: pwsh
-        env:
-          VK_DRIVER_FILES: ${{ env.LAVAPIPE_ICD }}
         run: |
           odin run build -- tests_gen_local_goldens_gh_actions
 
