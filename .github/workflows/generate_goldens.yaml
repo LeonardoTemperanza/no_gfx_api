@@ -5,49 +5,96 @@ on:
 
 jobs:
   generate:
-    runs-on: ubuntu-24.04
+    runs-on: windows-2025
 
     steps:
-      - uses: actions/checkout@v4.3.1
+      - name: Checkout
+        uses: actions/checkout@v4.3.1
+
       - name: Install Odin
         uses: laytan/setup-odin@v2
         with:
           release: dev-2026-06
 
-      - name: Install Vulkan SDK + Lavapipe
+      - name: Install Vulkan SDK
         uses: jakoch/install-vulkan-sdk-action@v1.6.0
         with:
           vulkan_version: 1.4.350.0
           optional_components: com.lunarg.vulkan.vma
+          install_runtime: true
           cache: true
           stripdown: true
 
+          # We install our own pinned Lavapipe below.
           install_swiftshader: false
-          install_lavapipe: true
+          install_lavapipe: false
+
+      - name: Install pinned Lavapipe 26.1.5
+        shell: pwsh
+        run: |
+          $url = "https://github.com/jakoch/rasterizers/releases/download/20260730/lavapipe-x64-26.1.5.zip"
+          $zip = "$env:RUNNER_TEMP\lavapipe.zip"
+          $dest = "C:\lavapipe"
+
+          Write-Host "Downloading Lavapipe 26.1.5..."
+          Invoke-WebRequest -Uri $url -OutFile $zip
+
+          Write-Host "Extracting to $dest..."
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+
+          Write-Host "=== Lavapipe contents ==="
+          Get-ChildItem $dest -Recurse
+
+      - name: Find Lavapipe ICD
+        shell: pwsh
+        run: |
+          $icd = Get-ChildItem C:\lavapipe -Recurse `
+            -Filter "lvp_icd.x86_64.json" |
+            Select-Object -First 1
+
+          if (-not $icd) {
+            throw "Could not find lvp_icd.x86_64.json"
+          }
+
+          Write-Host "Lavapipe ICD: $($icd.FullName)"
+
+          # Make it available to subsequent workflow steps.
+          "LAVAPIPE_ICD=$($icd.FullName)" >> $env:GITHUB_ENV
 
       - name: Record environment
+        shell: pwsh
+        env:
+          VK_DRIVER_FILES: ${{ env.LAVAPIPE_ICD }}
         run: |
-          echo "=== Runner ==="
-          echo "ImageOS=$ImageOS"
-          echo "ImageVersion=$ImageVersion"
-          uname -a
+          Write-Host "=== Runner ==="
+          Write-Host "ImageOS=$env:ImageOS"
+          Write-Host "ImageVersion=$env:ImageVersion"
 
-          echo "=== Odin ==="
+          Write-Host "=== Odin ==="
           odin version
 
-          echo "=== Vulkan ==="
-          vulkaninfo --summary || true
+          Write-Host "=== Lavapipe ICD ==="
+          Write-Host $env:VK_DRIVER_FILES
+          Get-Content $env:VK_DRIVER_FILES
 
-          echo "=== Vulkan driver ==="
-          vulkaninfo | grep -E \
-            'deviceName|driverName|driverInfo|driverVersion|apiVersion' \
-            || true
+          Write-Host "=== Vulkan ==="
+          vulkaninfo --summary
+
+          Write-Host "=== Vulkan driver ==="
+          vulkaninfo |
+            Select-String 'deviceName|driverName|driverInfo|driverVersion|apiVersion'
 
       - name: Run Tests
-        run: odin run build -- tests_gen_local_goldens_gh_actions
+        shell: pwsh
+        env:
+          VK_DRIVER_FILES: ${{ env.LAVAPIPE_ICD }}
+        run: |
+          odin run build -- tests_gen_local_goldens_gh_actions
 
       - name: Upload golden images
         uses: actions/upload-artifact@v4
         with:
           name: golden-images
           path: tests/goldens_local/
+          if-no-files-found: error
