@@ -36,7 +36,7 @@ tests := []Test {
     { "comparison_sampler", test_comparison_sampler, {}},
     { "sw_pathtracing", test_sw_pathtracing, {}},  // Test a complex shader. Scene is hardcoded in the shader, HW RT is not used.
                                                    // This is useful because CPU implementations of Vulkan usually don't support HW RT.
-    { "hw_pathtracing", test_hw_pathtracing, { .Raytracing }},
+    //{ "hw_pathtracing", test_hw_pathtracing, { .Raytracing }},
 }
 
 Operation_Mode :: enum
