@@ -85,18 +85,7 @@ main :: proc()
     {
         test_id := idx + 1
 
-        // Clear render target
-        {
-            cmd_buf := gpu.commands_begin(.Main)
-            gpu.cmd_begin_render_pass(cmd_buf, {
-                color_attachments = {
-                    { texture = target.color, clear_color = { 0, 0, 0, 1 } }
-                }
-            })
-            gpu.cmd_end_render_pass(cmd_buf)
-            gpu.queue_submit(.Main, { cmd_buf })
-            gpu.wait_idle()
-        }
+        fmt.println(gpu.features_available())
 
         // NOTE: Lavapipe claims to support RT but segfaults, sooo.....
         if is_gh_actions && .Raytracing in test.required_features
@@ -111,6 +100,19 @@ main :: proc()
                          test_id, test.name,
                          test.required_features - gpu.features_available())
             continue
+        }
+
+        // Clear render target
+        {
+            cmd_buf := gpu.commands_begin(.Main)
+            gpu.cmd_begin_render_pass(cmd_buf, {
+                color_attachments = {
+                    { texture = target.color, clear_color = { 0, 0, 0, 1 } }
+                }
+            })
+            gpu.cmd_end_render_pass(cmd_buf)
+            gpu.queue_submit(.Main, { cmd_buf })
+            gpu.wait_idle()
         }
 
         test.test_proc(target)
