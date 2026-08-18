@@ -69,6 +69,10 @@ main :: proc()
         }
     }
 
+    if op_mode == .Compare_To_Global {
+        is_gh_actions = true
+    }
+
     test_logger := create_test_logger()
     defer destroy_test_logger(test_logger)
     context.logger = test_logger

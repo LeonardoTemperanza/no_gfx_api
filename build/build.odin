@@ -215,7 +215,7 @@ cmd_tests_compare_global_goldens :: proc() -> bool
 {
     cmd_run_compiler_tests() or_return
     res := true
-    res &= run_task("odin", "run", "tests", "--", "compare_to_global")
+    res &= run_task("odin", "run", "tests", "--", "compare_to_global", "is_gh_actions")
     return res
 }
 
