@@ -144,8 +144,8 @@ main :: proc()
 
 test_triangle :: proc(target: Render_Target)
 {
-    vert_shader := gpu.shader_create(#load("../examples/1_triangle/shaders/shader.vert.spv", []u32), .Vertex)
-    frag_shader := gpu.shader_create(#load("../examples/1_triangle/shaders/shader.frag.spv", []u32), .Fragment)
+    vert_shader := gpu.shader_create(#load("shaders/triangle.vert.spv", []u32), .Vertex)
+    frag_shader := gpu.shader_create(#load("shaders/triangle.frag.spv", []u32), .Fragment)
     defer {
         gpu.shader_destroy(vert_shader)
         gpu.shader_destroy(frag_shader)
