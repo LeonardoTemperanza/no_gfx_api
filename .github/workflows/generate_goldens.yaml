@@ -43,9 +43,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
           Expand-Archive -Path $zip -DestinationPath $dest -Force
 
-          Write-Host "=== Lavapipe files ==="
-          Get-ChildItem $dest -Recurse
-
       - name: Register pinned Lavapipe
         shell: pwsh
         run: |
@@ -58,9 +55,6 @@ jobs:
           }
 
           $icdPath = $icd.FullName
-
-          Write-Host "Registering Vulkan ICD:"
-          Write-Host $icdPath
 
           New-Item `
             -Path "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers" `
@@ -75,6 +69,34 @@ jobs:
 
           "LAVAPIPE_ICD=$icdPath" >> $env:GITHUB_ENV
 
+      - name: Locate validation layers
+        shell: pwsh
+        run: |
+          Write-Host "VULKAN_SDK=$env:VULKAN_SDK"
+
+          $validation = Get-ChildItem $env:VULKAN_SDK -Recurse `
+            -Filter "VK_LAYER_KHRONOS_validation.json" |
+            Select-Object -First 1
+
+          if (-not $validation) {
+            Write-Host "Validation layer manifest not found."
+            Write-Host "Searching SDK for layer files..."
+
+            Get-ChildItem $env:VULKAN_SDK -Recurse `
+              -Filter "*validation*"
+
+            throw "VK_LAYER_KHRONOS_validation.json was not installed"
+          }
+
+          $layerPath = Split-Path $validation.FullName
+
+          Write-Host "Validation layer manifest:"
+          Write-Host $validation.FullName
+
+          Write-Host "VK_LAYER_PATH=$layerPath"
+
+          "VK_LAYER_PATH=$layerPath" >> $env:GITHUB_ENV
+
       - name: Verify Vulkan
         shell: pwsh
         run: |
@@ -85,53 +107,22 @@ jobs:
           Write-Host "=== Odin ==="
           odin version
 
-          Write-Host "=== Lavapipe ==="
-
-          $icd = $env:LAVAPIPE_ICD
-
-          if (-not (Test-Path $icd)) {
-            throw "Missing Lavapipe ICD: $icd"
-          }
-
-          Write-Host "ICD:"
-          Write-Host $icd
-          Get-Content $icd
-
-          $icdDir = Split-Path $icd
-          $dll = Join-Path $icdDir "..\..\..\bin\vulkan_lvp.dll"
-          $dll = [System.IO.Path]::GetFullPath($dll)
-
-          if (-not (Test-Path $dll)) {
-            throw "Missing Lavapipe DLL: $dll"
-          }
-
-          Write-Host "Driver DLL:"
-          Write-Host $dll
-
-          Write-Host "=== Registered Vulkan drivers ==="
-          Get-ItemProperty `
-            "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers"
-
           Write-Host "=== Vulkan SDK ==="
           Write-Host "VULKAN_SDK=$env:VULKAN_SDK"
+          Write-Host "VK_LAYER_PATH=$env:VK_LAYER_PATH"
+
+          Write-Host "=== Validation layer ==="
+          Get-ChildItem $env:VK_LAYER_PATH
 
           $vulkanInfo = Join-Path `
             $env:VULKAN_SDK `
             "Bin\vulkaninfoSDK.exe"
 
           if (-not (Test-Path $vulkanInfo)) {
-            Write-Host "Could not find expected vulkaninfoSDK.exe."
-            Write-Host "Searching Vulkan SDK..."
-
-            Get-ChildItem `
-              $env:VULKAN_SDK `
-              -Recurse `
-              -Filter "*vulkaninfo*"
-
             throw "Could not find vulkaninfoSDK.exe"
           }
 
-          Write-Host "=== Vulkan ==="
+          Write-Host "=== Vulkan summary ==="
           & $vulkanInfo --summary
 
           Write-Host "=== Vulkan driver ==="
@@ -139,8 +130,15 @@ jobs:
             Select-String `
               'deviceName|driverName|driverInfo|driverVersion|apiVersion'
 
+          Write-Host "=== Vulkan layers ==="
+          & $vulkanInfo |
+            Select-String `
+              'VK_LAYER_KHRONOS_validation'
+
       - name: Run Tests
         shell: pwsh
+        env:
+          VK_LAYER_PATH: ${{ env.VK_LAYER_PATH }}
         run: |
           odin run build -- tests_gen_local_goldens_gh_actions
 
