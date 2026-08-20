@@ -2321,6 +2321,11 @@ _cmd_copy_to_texture :: proc(cmd_buf: Command_Buffer, dst: Texture, src: gpuptr,
     mip_height := max(1, dst.dimensions.y >> region.mip_level)
     mip_depth := max(1, dst.dimensions.z >> region.mip_level)
 
+    copy_extent := [3]u32 {
+        region.rect.size.x if region.rect.size.x != 0 else mip_width,
+        region.rect.size.y if region.rect.size.y != 0 else mip_height,
+        region.rect.size.z if region.rect.size.z != 0 else mip_depth,
+    }
     copy := vk.BufferImageCopy{
         bufferOffset = vk.DeviceSize(src_offset),
         bufferRowLength = 0 if is_compressed else mip_width,
@@ -2331,8 +2336,8 @@ _cmd_copy_to_texture :: proc(cmd_buf: Command_Buffer, dst: Texture, src: gpuptr,
             baseArrayLayer = region.base_layer,
             layerCount = max(1, region.layer_count),
         },
-        imageOffset = {},
-        imageExtent = { mip_width, mip_height, mip_depth },
+        imageOffset = { region.rect.offset.x, region.rect.offset.y, region.rect.offset.z },
+        imageExtent = { copy_extent.x, copy_extent.y, copy_extent.z },
     }
 
     vk.CmdCopyBufferToImage(cmd_buf_info.handle, src_buf, tex_info.handle, .GENERAL, 1, &copy)
@@ -2361,6 +2366,11 @@ _cmd_copy_from_texture :: proc(cmd_buf: Command_Buffer, dst: gpuptr, src: Textur
     mip_height := max(1, src.dimensions.y >> region.mip_level)
     mip_depth := max(1, src.dimensions.z >> region.mip_level)
 
+    copy_extent := [3]u32 {
+        region.rect.size.x if region.rect.size.x != 0 else mip_width,
+        region.rect.size.y if region.rect.size.y != 0 else mip_height,
+        region.rect.size.z if region.rect.size.z != 0 else mip_depth,
+    }
     copy := vk.BufferImageCopy{
         bufferOffset = vk.DeviceSize(dst_offset),
         bufferRowLength = 0 if is_compressed else mip_width,
@@ -2371,8 +2381,8 @@ _cmd_copy_from_texture :: proc(cmd_buf: Command_Buffer, dst: gpuptr, src: Textur
             baseArrayLayer = region.base_layer,
             layerCount = max(1, region.layer_count),
         },
-        imageOffset = {},
-        imageExtent = { mip_width, mip_height, mip_depth },
+        imageOffset = { region.rect.offset.x, region.rect.offset.y, region.rect.offset.z },
+        imageExtent = { copy_extent.x, copy_extent.y, copy_extent.z },
     }
 
     vk.CmdCopyImageToBuffer(cmd_buf_info.handle, tex_info.handle, .GENERAL, dst_buf, 1, &copy)
