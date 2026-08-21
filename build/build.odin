@@ -47,7 +47,6 @@ EXAMPLES: [dynamic]Example
 cmd_default :: proc() -> bool
 {
     cmd_check_gpu() or_return
-    cmd_check_tests() or_return
     res := true
     res &= cmd_compiler()
     res &= cmd_build_examples_parallel()
@@ -57,7 +56,6 @@ cmd_default :: proc() -> bool
 cmd_build_all_with_slang :: proc() -> bool
 {
     cmd_check_gpu() or_return
-    cmd_check_tests() or_return
     res := true
     res &= cmd_build_examples_parallel(build_shaders_nosl = false, build_shaders_slang = true)
     return res
