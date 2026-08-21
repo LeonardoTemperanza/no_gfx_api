@@ -306,7 +306,9 @@ compile_glsl_to_spirv :: proc(shader_type: Shader_Stage, glsl_source: string, in
     }
 
     err := os.write_entire_file_from_bytes(output_path, slice.to_bytes(spirv_binary))
-    ensure(err == nil)
+    if err != nil {
+        fmt.printfln("Could not write file %v: %v", output_path, err)
+    }
 
     return true
 }
