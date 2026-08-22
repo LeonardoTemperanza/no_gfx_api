@@ -16,6 +16,10 @@ Vert_Output :: struct
     color: vec4 @io(0),
 }
 
+mask_out_red   := true  @spec(0);
+mask_out_green := true  @spec(1);
+mask_out_blue  := false @spec(2);
+
 vert :: #vertex (vert_id: uint @vert_id, data: ^Data @data) -> Vert_Output
 {
     out: Vert_Output;
@@ -26,5 +30,9 @@ vert :: #vertex (vert_id: uint @vert_id, data: ^Data @data) -> Vert_Output
 
 frag :: #fragment (input: Vert_Output) -> vec4 @io(0)
 {
-    return input.color;
+    out := input.color;
+    if mask_out_red   { out.r = 0; }
+    if mask_out_green { out.g = 0; }
+    if mask_out_blue  { out.b = 0; }
+    return out;
 }

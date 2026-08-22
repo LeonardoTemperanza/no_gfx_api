@@ -28,7 +28,7 @@ Test :: struct
 }
 
 tests := []Test {
-    { "triangle", test_triangle, {} },
+    { "spec_constants", test_spec_constants, {} },
     { "texture", test_texture, {} },
     { "texture_advanced", test_texture_advanced, {}},
     { "indirect", test_indirect, { .Draw_Indirect_Multi }},
@@ -164,10 +164,14 @@ main :: proc()
     }
 }
 
-test_triangle :: proc(target: Render_Target)
+test_spec_constants :: proc(target: Render_Target)
 {
-    vert_shader := gpu.shader_create(#load("shaders/triangle.vert.spv", []u32), .Vertex)
-    frag_shader := gpu.shader_create(#load("shaders/triangle.frag.spv", []u32), .Fragment)
+    spec_constants := []gpu.Spec_Constant {
+        { 0, false }
+    }
+
+    vert_shader := gpu.shader_create(#load("shaders/spec_constants.vert.spv", []u32), .Vertex,   spec_constants = spec_constants)
+    frag_shader := gpu.shader_create(#load("shaders/spec_constants.frag.spv", []u32), .Fragment, spec_constants = spec_constants)
     defer {
         gpu.shader_destroy(vert_shader)
         gpu.shader_destroy(frag_shader)
