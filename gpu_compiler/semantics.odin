@@ -344,11 +344,19 @@ typecheck_expr :: proc(using c: ^Checker, expression: ^Ast_Expr)
         case ^Ast_Ident_Expr:
         {
             decl := decl_lookup(scope, ast.imports[:], expr.token)
-            if decl == nil {
+            if decl == nil
+            {
                 typecheck_error(c, expr.token, "Undeclared identifier '%v'.", expr.token.text)
-            } else {
+            }
+            else
+            {
                 expr.type = decl.type
                 expr.glsl_name = decl.glsl_name
+                switch decl.constness
+                {
+                    case .Runtime:  {}
+                    case .Spectime: expr.is_const = true
+                }
             }
         }
         case ^Ast_Lit_Expr:
@@ -1409,7 +1417,13 @@ check_assign_lhs :: proc(using c: ^Checker, expr: ^Ast_Expr) -> bool
     // Check expression constness
     if expr.is_const
     {
-        typecheck_error(c, expr.token, "Pointers and slices are immutable by default, use 'mut^ T' and 'mut[] T' for mutability. Mutability affects performance.")
+        if expr.type.kind != .Primitive {
+            typecheck_error(c, expr.token, "Pointers and slices are immutable by default, use 'mut^ T' and 'mut[] T' for mutability. Mutability affects performance.")
+        } else if _, ok := expr.derived_expr.(^Ast_Ident_Expr); ok {  // TODO: @robustness Make this check better
+            typecheck_error(c, expr.token, "This variable is a specialization constant, thus it is immutable (but it still behaves as a runtime variable).")
+        } else {
+            typecheck_error(c, expr.token, "This expression is immutable.")
+        }
         return false
     }
 

@@ -58,6 +58,13 @@ Ast_Scope :: struct
 
 // Declarations (global)
 
+Ast_Decl_Constness :: enum
+{
+    Runtime = 0,
+    // Comptime,
+    Spectime,  // Specialization constants.
+}
+
 Ast_Decl :: struct
 {
     using base: Ast_Node,
@@ -68,6 +75,8 @@ Ast_Decl :: struct
     has_init: bool,
     is_entrypoint: bool,
     entrypoint_stage: Shader_Stage,
+
+    constness: Ast_Decl_Constness,
 }
 
 Ast_Proc_Def :: struct
@@ -115,6 +124,7 @@ Ast_Attribute_Type :: enum
 
     // With args:
     IO,
+    Spec,
 }
 
 Ast_Attribute_Specifier :: enum
@@ -130,7 +140,7 @@ Ast_Attribute :: struct
 {
     type: Ast_Attribute_Type,
     specs: Ast_Attribute_Specifiers,
-    loc: u32
+    id: u32
 }
 
 Ast_Binary_Op :: enum
@@ -562,6 +572,14 @@ _parse_file :: proc(using p: ^Parser) -> Ast
                         def_var.decl = decl
                         def_var.expr = parse_expr(p)
                         append(&ast.global_vars, def_var)
+                    }
+
+                    if tokens[at].type == .Attribute
+                    {
+                        decl.attr = parse_attribute(p)
+                        if decl.attr.?.type == .Spec {
+                            decl.constness = .Spectime
+                        }
                     }
 
                     required_token(p, .Semi)
@@ -1278,7 +1296,7 @@ parse_attribute :: proc(using p: ^Parser) -> Maybe(Ast_Attribute)
             attr.type, _ = .IO,
             required_token(p, .LParen)
             num_token := required_token(p, .IntLit)
-            attr.loc = u32(get_token_lit_int_value(num_token))
+            attr.id = u32(get_token_lit_int_value(num_token))
 
             if optional_token(p, .Comma)
             {
@@ -1301,6 +1319,14 @@ parse_attribute :: proc(using p: ^Parser) -> Maybe(Ast_Attribute)
                 }
             }
 
+            required_token(p, .RParen)
+        }
+        case "spec":
+        {
+            attr.type, _ = .Spec,
+            required_token(p, .LParen)
+            num_token := required_token(p, .IntLit)
+            attr.id = u32(get_token_lit_int_value(num_token))
             required_token(p, .RParen)
         }
         case:

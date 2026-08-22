@@ -132,11 +132,18 @@ codegen_ast_decls :: proc(ast: Ast, input_path: string)
                 {
                     if global.decl == decl
                     {
-                        writef("%v %v", type_to_glsl(global.decl.type), global.decl.glsl_name)
+                        if global.decl.constness == .Spectime
+                        {
+                            writef("layout(constant_id = 0) const %v %v", type_to_glsl(global.decl.type), global.decl.glsl_name)
+                        }
+                        else
+                        {
+                            writef("%v %v", type_to_glsl(global.decl.type), global.decl.glsl_name)
+                        }
+
                         write(" = ")
                         codegen_expr(global.expr)
                         writeln(";")
-
                         has_def = true
                         break
                     }
@@ -952,7 +959,7 @@ unary_op_to_glsl :: proc(op: Ast_Unary_Op) -> string
 
 attribute_to_glsl :: proc(attribute: Ast_Attribute, stage: Shader_Stage, is_input: bool) -> string
 {
-    val_str := runtime.cstring_to_string(fmt.caprint(attribute.loc, allocator = context.allocator))
+    val_str := runtime.cstring_to_string(fmt.caprint(attribute.id, allocator = context.allocator))
 
     switch attribute.type
     {
@@ -977,6 +984,7 @@ attribute_to_glsl :: proc(attribute: Ast_Attribute, stage: Shader_Stage, is_inpu
         case .Group_Size: return "gl_WorkGroupSize"
         case .Global_Invocation_ID: return "gl_GlobalInvocationID"
         case .IO: return strings.concatenate({"_res_in_loc" if is_input else "_res_out_loc", val_str, "_"})
+        case .Spec: panic("Unreachable")
     }
 
     return {}
@@ -1152,7 +1160,7 @@ write_entrypoint_inputs_outputs :: proc(decl: ^Ast_Decl)
     write_inout :: proc(attr: Ast_Attribute, type: ^Ast_Type, is_input: bool)
     {
         write_begin()
-        writef("layout(location = %v) ", attr.loc)
+        writef("layout(location = %v) ", attr.id)
         if is_input {
             write("in ")
         } else {
@@ -1172,7 +1180,7 @@ write_entrypoint_inputs_outputs :: proc(decl: ^Ast_Decl)
         } else {
             write("out")
         }
-        writefln("_loc%v_;", attr.loc)
+        writefln("_loc%v_;", attr.id)
     }
 
     is_attr_inout :: proc(attr: Ast_Attribute) -> bool
