@@ -1866,7 +1866,15 @@ _shader_create_internal :: proc(code: []u32, is_compute: bool, vk_stage: vk.Shad
             offset = u32(spec_count * size_of(u32)),
             size = size_of(u32),
         }
-        spec_data[spec_count] = group_size_x
+        value_reinterpret := u32(0)
+        switch val in spec_constant.value
+        {
+            case f32: value_reinterpret = transmute(u32) val
+            case u32: value_reinterpret =                val
+            case b32: value_reinterpret = transmute(u32) val
+            case i32: value_reinterpret = cast(u32)      val
+        }
+        spec_data[spec_count] = value_reinterpret
         spec_count += 1
     }
 

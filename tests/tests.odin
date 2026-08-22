@@ -167,7 +167,9 @@ main :: proc()
 test_spec_constants :: proc(target: Render_Target)
 {
     spec_constants := []gpu.Spec_Constant {
-        { 0, false }
+        { 0, u32(1) },
+        { 1, true   },
+        { 3, false  },
     }
 
     vert_shader := gpu.shader_create(#load("shaders/spec_constants.vert.spv", []u32), .Vertex,   spec_constants = spec_constants)
