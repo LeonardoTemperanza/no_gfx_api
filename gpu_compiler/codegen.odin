@@ -134,7 +134,7 @@ codegen_ast_decls :: proc(ast: Ast, input_path: string)
                     {
                         if global.decl.constness == .Spectime
                         {
-                            writef("layout(constant_id = 0) const %v %v", type_to_glsl(global.decl.type), global.decl.glsl_name)
+                            writef("layout(constant_id = %v) const %v %v", global.decl.attr.?.id, type_to_glsl(global.decl.type), global.decl.glsl_name)
                         }
                         else
                         {
