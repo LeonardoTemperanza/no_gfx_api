@@ -1826,8 +1826,10 @@ _desc_heap_set_bvhs :: proc(heap: Descriptor_Heap, start_idx: u32, bvhs: []BVH, 
 
 // Shaders
 @(private="file")
-_shader_create_internal :: proc(code: []u32, is_compute: bool, vk_stage: vk.ShaderStageFlags, entry_point_name := "main", group_size_x: u32 = 1, group_size_y: u32 = 1, group_size_z: u32 = 1, name: string, loc: runtime.Source_Code_Location) -> Shader
+_shader_create_internal :: proc(code: []u32, is_compute: bool, vk_stage: vk.ShaderStageFlags, entry_point_name := "main", group_size_x: u32 = 1, group_size_y: u32 = 1, group_size_z: u32 = 1, name: string, spec_constants: []Spec_Constant, loc: runtime.Source_Code_Location) -> Shader
 {
+    scratch, _ := acquire_scratch()
+
     push_constant_ranges: []vk.PushConstantRange
     if is_compute {
         push_constant_ranges = []vk.PushConstantRange {
@@ -1846,43 +1848,53 @@ _shader_create_internal :: proc(code: []u32, is_compute: bool, vk_stage: vk.Shad
     }
 
     // Setup specialization constants for compute shader workgroup size
-    spec_map_entries: [3]vk.SpecializationMapEntry
-    spec_data: [3]u32
+    spec_constants_count := len(spec_constants)
+    if is_compute do spec_constants_count += 3
+    spec_map_entries := make([]vk.SpecializationMapEntry, spec_constants_count, allocator = scratch)
+
+    // This code assumes all values in the union are 4 bytes.
+    #assert(size_of(spec_constants[0].value) == 8)
+    spec_data := make([]u32, spec_constants_count, allocator = scratch)
     spec_info: vk.SpecializationInfo
     spec_info_ptr: ^vk.SpecializationInfo = nil
     spec_count: u32 = 0
 
+    for spec_constant in spec_constants
+    {
+        spec_map_entries[spec_count] = vk.SpecializationMapEntry {
+            constantID = spec_constant.id,
+            offset = u32(spec_count * size_of(u32)),
+            size = size_of(u32),
+        }
+        spec_data[spec_count] = group_size_x
+        spec_count += 1
+    }
+
     if is_compute
     {
-        {
-            spec_map_entries[spec_count] = vk.SpecializationMapEntry {
-                constantID = 13370, // Random big ids to avoid conflicts with user defined constants
-                offset = u32(spec_count * size_of(u32)),
-                size = size_of(u32),
-            }
-            spec_data[spec_count] = group_size_x
-            spec_count += 1
+        spec_map_entries[spec_count] = vk.SpecializationMapEntry {
+            constantID = 13370, // Random big ids to avoid conflicts with user defined constants
+            offset = u32(spec_count * size_of(u32)),
+            size = size_of(u32),
         }
+        spec_data[spec_count] = group_size_x
+        spec_count += 1
 
-        {
-            spec_map_entries[spec_count] = vk.SpecializationMapEntry {
-                constantID = 13371, // Random big ids to avoid conflicts with user defined constants
-                offset = u32(spec_count * size_of(u32)),
-                size = size_of(u32),
-            }
-            spec_data[spec_count] = group_size_y
-            spec_count += 1
+        spec_map_entries[spec_count] = vk.SpecializationMapEntry {
+            constantID = 13371, // Random big ids to avoid conflicts with user defined constants
+            offset = u32(spec_count * size_of(u32)),
+            size = size_of(u32),
         }
+        spec_data[spec_count] = group_size_y
+        spec_count += 1
 
-        {
-            spec_map_entries[spec_count] = vk.SpecializationMapEntry {
-                constantID = 13372, // Random big ids to avoid conflicts with user defined constants
-                offset = u32(spec_count * size_of(u32)),
-                size = size_of(u32),
-            }
-            spec_data[spec_count] = group_size_z
-            spec_count += 1
+        spec_map_entries[spec_count] = vk.SpecializationMapEntry {
+            constantID = 13372, // Random big ids to avoid conflicts with user defined constants
+            offset = u32(spec_count * size_of(u32)),
+            size = size_of(u32),
         }
+        spec_data[spec_count] = group_size_z
+        spec_count += 1
     }
 
     if spec_count > 0
@@ -1936,15 +1948,16 @@ _shader_create_internal :: proc(code: []u32, is_compute: bool, vk_stage: vk.Shad
     return pool_add(&ctx.shaders, shader, { created_at = loc, name = name })
 }
 
-_shader_create :: proc(code: []u32, type: Shader_Type_Graphics, entry_point_name := "main", name := "", loc := #caller_location) -> Shader
+_shader_create :: proc(code: []u32, type: Shader_Type_Graphics, entry_point_name := "main", name := "", spec_constants: []Spec_Constant = {}, loc := #caller_location) -> Shader
 {
     vk_stage := to_vk_shader_stage(type)
-    return _shader_create_internal(code, false, vk_stage, entry_point_name, name = name, loc = loc)
+    return _shader_create_internal(code, false, vk_stage, entry_point_name, name = name, spec_constants = spec_constants, loc = loc)
 }
 
-_shader_create_compute :: proc(code: []u32, group_size_x: u32, group_size_y: u32 = 1, group_size_z: u32 = 1, entry_point_name := "main", name := "", loc := #caller_location) -> Shader
+_shader_create_compute :: proc(code: []u32, group_size_x: u32, group_size_y: u32 = 1, group_size_z: u32 = 1, entry_point_name := "main", name := "", spec_constants: []Spec_Constant = {}, loc := #caller_location) -> Shader
 {
-    return _shader_create_internal(code, true, { .COMPUTE }, entry_point_name, group_size_x, group_size_y, group_size_z, name = name, loc = loc)
+    // TODO: Add validation for spec constants conflicting with backend allocated spec constants for workgroup size.
+    return _shader_create_internal(code, true, { .COMPUTE }, entry_point_name, group_size_x, group_size_y, group_size_z, name = name, spec_constants = spec_constants, loc = loc)
 }
 
 _shader_destroy :: proc(shader: Shader, loc := #caller_location)

@@ -298,6 +298,12 @@ Device_Limits :: struct
     max_anisotropy: f32,
 }
 
+Spec_Constant :: struct
+{
+    id: u32,
+    value: union { f32, b32, i32, u32 }
+}
+
 // Procedures
 
 // Initialization and interaction with the OS.
@@ -337,8 +343,8 @@ texture_rw_view_descriptor: proc(texture: Texture, view_desc: Texture_View_Desc,
 sampler_descriptor: proc(sampler_desc: Sampler_Desc, loc := #caller_location) -> Sampler_Descriptor : _sampler_descriptor
 
 // Shaders
-shader_create: proc(code: []u32, type: Shader_Type_Graphics, entry_point_name := "main", name := "", loc := #caller_location) -> Shader : _shader_create
-shader_create_compute: proc(code: []u32, group_size_x: u32, group_size_y: u32 = 1, group_size_z: u32 = 1, entry_point_name := "main", name := "", loc := #caller_location) -> Shader : _shader_create_compute
+shader_create: proc(code: []u32, type: Shader_Type_Graphics, entry_point_name := "main", name := "", spec_constants: []Spec_Constant = {}, loc := #caller_location) -> Shader : _shader_create
+shader_create_compute: proc(code: []u32, group_size_x: u32, group_size_y: u32 = 1, group_size_z: u32 = 1, entry_point_name := "main", name := "", spec_constants: []Spec_Constant = {}, loc := #caller_location) -> Shader : _shader_create_compute
 shader_destroy: proc(shader: Shader, loc := #caller_location) : _shader_destroy
 
 // Semaphores
