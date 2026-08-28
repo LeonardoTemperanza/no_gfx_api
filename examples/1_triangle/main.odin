@@ -111,6 +111,10 @@ main :: proc()
             gpu.swapchain_resize({ u32(max(0, window_size_x)), u32(max(0, window_size_y)) })
         }
         swapchain := gpu.swapchain_acquire_next()  // Blocks CPU until at least one frame is available.
+        if swapchain == {} {
+            gpu.swapchain_resize({ u32(max(0, window_size_x)), u32(max(0, window_size_y)) })
+            continue
+        }
 
         last_ts := now_ts
         now_ts = sdl.GetPerformanceCounter()

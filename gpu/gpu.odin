@@ -313,8 +313,10 @@ wait_idle: proc() : _wait_idle
 // Can be called for recreation. Automatically destroyed by cleanup()
 swapchain_create: proc(surface: vk.SurfaceKHR, init_size: [2]u32, frames_in_flight: u32, present_mode: Present_Mode = {}) : _swapchain_create
 swapchain_resize: proc(size: [2]u32) : _swapchain_resize  // NOTE: Do not call this every frame! Only if the dimensions change.
-swapchain_acquire_next: proc() -> Texture : _swapchain_acquire_next  // Blocks CPU until at least one frame is available.
-swapchain_present: proc(queue: Queue, sem_wait: Semaphore, wait_value: u64) : _swapchain_present
+// Blocks CPU until at least one frame is available.
+// NOTE: This can return a nil texture because of OS quirks!
+swapchain_acquire_next: proc(loc := #caller_location) -> Texture : _swapchain_acquire_next
+swapchain_present: proc(queue: Queue, sem_wait: Semaphore, wait_value: u64, loc := #caller_location) : _swapchain_present
 features_available: proc() -> Features : _features_available
 device_limits: proc() -> Device_Limits : _device_limits
 

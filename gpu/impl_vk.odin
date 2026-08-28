@@ -71,6 +71,7 @@ Context :: struct
     swapchain: Swapchain,
     swapchain_desc: Swapchain_Desc,
     swapchain_image_idx: u32,
+    swapchain_is_stale: bool,
 
     queue_lock: sync.Atomic_Mutex,
     tls_lock: sync.Atomic_Mutex,
@@ -1032,6 +1033,8 @@ _wait_idle :: proc()
 
 _swapchain_create :: proc(surface: vk.SurfaceKHR, init_size: [2]u32, frames_in_flight: u32, present_mode: Present_Mode = {})
 {
+    ctx.swapchain_is_stale = false
+
     if ctx.swapchain.handle != {} {
         queue_wait_idle(.Main)
         destroy_swapchain(&ctx.swapchain)
@@ -1062,14 +1065,16 @@ _swapchain_create :: proc(surface: vk.SurfaceKHR, init_size: [2]u32, frames_in_f
 
 _swapchain_resize :: proc(size: [2]u32)
 {
+    ctx.swapchain_is_stale = false
+
     old_handle := ctx.swapchain.handle
+    defer if old_handle != {} {
+        vk.DestroySwapchainKHR(ctx.device, old_handle, nil)
+    }
     if ctx.swapchain.handle != {} {
         queue_wait_idle(.Main)
         destroy_swapchain(&ctx.swapchain, free_handle = false)
     }
-
-    ctx.swapchain_desc.width = size.x
-    ctx.swapchain_desc.height = size.y
 
     // NOTE: surface_caps.currentExtent could be max(u32)!!!
     surface_caps: vk.SurfaceCapabilitiesKHR
@@ -1081,25 +1086,37 @@ _swapchain_resize :: proc(size: [2]u32)
     }
     assert(extent.width != max(u32) && extent.height != max(u32))
 
+    // NOTE: Apparently surface_caps.currentExtent could also be 0!!!
+    if extent.width == 0 || extent.height == 0
+    {
+        ctx.swapchain_is_stale = true
+        return
+    }
+
     ctx.swapchain_desc.width = max(extent.width, 1)
     ctx.swapchain_desc.height = max(extent.height, 1)
     ctx.swapchain = create_swapchain(ctx.swapchain_desc, old_handle)
-
-    if old_handle != {} {
-        vk.DestroySwapchainKHR(ctx.device, old_handle, nil)
-    }
 }
 
-_swapchain_acquire_next :: proc() -> Texture
+_swapchain_acquire_next :: proc(loc := #caller_location) -> Texture
 {
+    if ctx.swapchain_is_stale {
+        log.warn("Swapchain is stale!", location = loc)
+        return {}
+    }
+
     fence_ci := vk.FenceCreateInfo { sType = .FENCE_CREATE_INFO }
     fence: vk.Fence
     vk_check(vk.CreateFence(ctx.device, &fence_ci, nil, &fence))
     defer vk.DestroyFence(ctx.device, fence, nil)
 
     res := vk.AcquireNextImageKHR(ctx.device, ctx.swapchain.handle, max(u64), {}, fence, &ctx.swapchain_image_idx)
-    if res == .SUBOPTIMAL_KHR do log.warn("Suboptimal swapchain acquire!")
-    if res != .SUCCESS && res != .SUBOPTIMAL_KHR {
+    if res == .SUBOPTIMAL_KHR do log.warn("Suboptimal swapchain acquire!", location = loc)
+    if res == .ERROR_OUT_OF_DATE_KHR {
+        log.warn("Swapchain is stale!", location = loc)
+        return {}
+    }
+    if res != .SUBOPTIMAL_KHR && res != .ERROR_OUT_OF_DATE_KHR {
         vk_check(res)
     }
 
@@ -1145,8 +1162,12 @@ _swapchain_acquire_next :: proc() -> Texture
     }
 }
 
-_swapchain_present :: proc(queue: Queue, sem_wait: Semaphore, wait_value: u64)
+_swapchain_present :: proc(queue: Queue, sem_wait: Semaphore, wait_value: u64, loc := #caller_location)
 {
+    if ctx.swapchain_is_stale {
+        log.warn("Swapchain is stale!", location = loc)
+    }
+
     queue_info := ctx.queues[queue]
     vk_queue := queue_info.handle
 
@@ -1199,8 +1220,13 @@ _swapchain_present :: proc(queue: Queue, sem_wait: Semaphore, wait_value: u64)
             pSwapchains = &ctx.swapchain.handle,
             pImageIndices = &ctx.swapchain_image_idx,
         })
-        if res == .SUBOPTIMAL_KHR do log.warn("Suboptimal swapchain present!")
-        if res != .SUCCESS && res != .SUBOPTIMAL_KHR {
+        if res == .SUBOPTIMAL_KHR do log.warn("Suboptimal swapchain present!", location = loc)
+        if res == .ERROR_OUT_OF_DATE_KHR
+        {
+            log.warn("Swapchain is stale!", location = loc)
+            ctx.swapchain_is_stale = true
+        }
+        if res != .SUBOPTIMAL_KHR && res != .ERROR_OUT_OF_DATE_KHR {
             vk_check(res)
         }
     }
