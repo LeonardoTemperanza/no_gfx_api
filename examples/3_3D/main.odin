@@ -119,7 +119,7 @@ main :: proc()
         if old_window_size_x != window_size_x || old_window_size_y != window_size_y
         {
             gpu.queue_wait_idle(.Main)
-            gpu.swapchain_resize({ u32(max(0, window_size_x)), u32(max(0, window_size_y)) })
+            gpu.swapchain_resize({ u32(window_size_x), u32(window_size_y) })
             depth_desc.dimensions.x = u32(window_size_x)
             depth_desc.dimensions.y = u32(window_size_y)
             gpu.texture_free_and_destroy(&depth_texture)
@@ -127,6 +127,10 @@ main :: proc()
         }
 
         swapchain := gpu.swapchain_acquire_next()  // Blocks CPU until at least one frame is available.
+        if swapchain == {} {
+            gpu.swapchain_resize({ u32(window_size_x), u32(window_size_y) })
+            continue
+        }
 
         frame_arena := &frame_arenas[next_frame % Frames_In_Flight]
         gpu.arena_free_all(frame_arena)

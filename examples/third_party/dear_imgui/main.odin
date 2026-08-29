@@ -128,7 +128,7 @@ main :: proc()
             gpu.semaphore_wait(frame_sem, next_frame - Frames_In_Flight)
         }
         if old_window_size_x != window_size_x || old_window_size_y != window_size_y {
-            gpu.swapchain_resize({ u32(max(0, window_size_x)), u32(max(0, window_size_y)) })
+            gpu.swapchain_resize({ u32(window_size_x), u32(window_size_y) })
         }
 
         last_ts := now_ts
@@ -154,6 +154,9 @@ main :: proc()
         imgui.render()
 
         swapchain := gpu.swapchain_acquire_next()
+        if swapchain == {} {
+            gpu.swapchain_resize({ u32(window_size_x), u32(window_size_y) })
+        }
 
         cmd_buf := gpu.commands_begin(.Main)
         gpu.cmd_set_desc_heap(cmd_buf, desc_pool)

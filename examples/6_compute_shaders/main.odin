@@ -155,7 +155,7 @@ main :: proc()
         if old_window_size_x != window_size_x || old_window_size_y != window_size_y
         {
             gpu.queue_wait_idle(.Main)
-            gpu.swapchain_resize({ u32(max(0, window_size_x)), u32(max(0, window_size_y)) })
+            gpu.swapchain_resize({ u32(window_size_x), u32(window_size_y) })
 
             output_desc.dimensions.x = u32(window_size_x)
             output_desc.dimensions.y = u32(window_size_y)
@@ -168,6 +168,10 @@ main :: proc()
         }
 
         swapchain := gpu.swapchain_acquire_next()  // Blocks CPU until at least one frame is available.
+        if swapchain == {} {
+            gpu.swapchain_resize({ u32(window_size_x), u32(window_size_y) })
+            continue
+        }
 
         last_ts := now_ts
         now_ts = sdl.GetPerformanceCounter()

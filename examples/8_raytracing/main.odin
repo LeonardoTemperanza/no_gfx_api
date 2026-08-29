@@ -216,6 +216,9 @@ main :: proc()
         camera_to_world := linalg.inverse(shared.first_person_camera_view(delta_time))
 
         swapchain := gpu.swapchain_acquire_next()  // Blocks CPU until at least one frame is available.
+        if swapchain == {} {
+            gpu.swapchain_resize({ u32(window_size_x), u32(window_size_y) })
+        }
 
         // Allocate compute data for this frame with current time and resolution
         compute_data := gpu.arena_alloc(frame_arena, Compute_Data)
