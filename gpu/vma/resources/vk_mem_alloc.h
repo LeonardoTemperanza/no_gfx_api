@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2017-2025 Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2017-2026 Advanced Micro Devices, Inc. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,11 +25,11 @@
 
 /** \mainpage Vulkan Memory Allocator
 
-<b>Version 3.3.0</b>
+<b>Version 3.4.0</b>
 
-Copyright (c) 2017-2025 Advanced Micro Devices, Inc. All rights reserved. \n
+Copyright (c) 2017-2026 Advanced Micro Devices, Inc. All rights reserved. \n
 License: MIT \n
-See also: [product page on GPUOpen](https://gpuopen.com/gaming-product/vulkan-memory-allocator/),
+See also: [product page on GPUOpen](https://gpuopen.com/vulkan-memory-allocator/),
 [repository on GitHub](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator)
 
 
@@ -79,6 +79,8 @@ See also: [product page on GPUOpen](https://gpuopen.com/gaming-product/vulkan-me
   - [Corruption detection](@ref debugging_memory_usage_corruption_detection)
   - [Leak detection features](@ref debugging_memory_usage_leak_detection)
 - \subpage other_api_interop
+  - [Exporting memory](@ref other_api_interop_exporting_memory)
+  - [Importing memory](@ref other_api_interop_importing_memory)
 - \subpage usage_patterns
     - [GPU-only resource](@ref usage_patterns_gpu_only)
     - [Staging copy for upload](@ref usage_patterns_staging_copy_upload)
@@ -95,7 +97,6 @@ See also: [product page on GPUOpen](https://gpuopen.com/gaming-product/vulkan-me
     - \subpage enabling_buffer_device_address
     - \subpage vk_ext_memory_priority
     - \subpage vk_amd_device_coherent_memory
-    - \subpage vk_khr_external_memory_win32
 - \subpage general_considerations
   - [Thread safety](@ref general_considerations_thread_safety)
   - [Versioning and compatibility](@ref general_considerations_versioning_and_compatibility)
@@ -128,9 +129,13 @@ See documentation chapter: \ref statistics.
 extern "C" {
 #endif
 
-#if !defined(VULKAN_H_)
-#include <vulkan/vulkan.h>
+#ifndef VMA_VULKAN_HEADERS_ALREADY_INCLUDED
+    #if !defined(VULKAN_H_)
+        #include <vulkan/vulkan.h>
+    #endif
 #endif
+
+#define VMA_VERSION (VK_MAKE_VERSION(3, 4, 0))
 
 #if !defined(VMA_VULKAN_VERSION)
     #if defined(VK_VERSION_1_4)
@@ -191,8 +196,16 @@ extern "C" {
     #endif
 #endif
 
+#if !defined(VMA_GET_PHYSICAL_DEVICE_PROPERTIES2)
+    #if VK_KHR_get_physical_device_properties2 || VMA_VULKAN_VERSION >= 1001000
+        #define VMA_GET_PHYSICAL_DEVICE_PROPERTIES2 1
+    #else
+        #define VMA_GET_PHYSICAL_DEVICE_PROPERTIES2 0
+    #endif
+#endif
+
 #if !defined(VMA_MEMORY_BUDGET)
-    #if VK_EXT_memory_budget && (VK_KHR_get_physical_device_properties2 || VMA_VULKAN_VERSION >= 1001000)
+    #if VK_EXT_memory_budget && VMA_GET_PHYSICAL_DEVICE_PROPERTIES2
         #define VMA_MEMORY_BUDGET 1
     #else
         #define VMA_MEMORY_BUDGET 0
@@ -478,7 +491,7 @@ typedef enum VmaAllocatorCreateFlagBits
 
     You should set this flag if you found available and enabled this device extension,
     while creating Vulkan device passed as VmaAllocatorCreateInfo::device.
-    For more information, see \ref vk_khr_external_memory_win32.
+    For more information, see \ref other_api_interop.
     */
     VMA_ALLOCATOR_CREATE_KHR_EXTERNAL_MEMORY_WIN32_BIT = 0x00000200,
 
@@ -1046,7 +1059,7 @@ typedef struct VmaVulkanFunctions
     /// Fetch "vkBindImageMemory2" on Vulkan >= 1.1, fetch "vkBindImageMemory2KHR" when using VK_KHR_bind_memory2 extension.
     PFN_vkBindImageMemory2KHR VMA_NULLABLE vkBindImageMemory2KHR;
 #endif
-#if VMA_MEMORY_BUDGET || VMA_VULKAN_VERSION >= 1001000
+#if VMA_GET_PHYSICAL_DEVICE_PROPERTIES2
     /// Fetch from "vkGetPhysicalDeviceMemoryProperties2" on Vulkan >= 1.1, but you can also fetch it from "vkGetPhysicalDeviceMemoryProperties2KHR" if you enabled extension VK_KHR_get_physical_device_properties2.
     PFN_vkGetPhysicalDeviceMemoryProperties2KHR VMA_NULLABLE vkGetPhysicalDeviceMemoryProperties2KHR;
 #endif
@@ -1060,6 +1073,10 @@ typedef struct VmaVulkanFunctions
     PFN_vkGetMemoryWin32HandleKHR VMA_NULLABLE vkGetMemoryWin32HandleKHR;
 #else
     void* VMA_NULLABLE vkGetMemoryWin32HandleKHR;
+#endif
+#if VMA_GET_PHYSICAL_DEVICE_PROPERTIES2
+    /// Fetch from "vkGetPhysicalDeviceProperties2" on Vulkan >= 1.1, but you can also fetch it from "vkGetPhysicalDeviceProperties2KHR" if you enabled extension VK_KHR_get_physical_device_properties2.
+    PFN_vkGetPhysicalDeviceProperties2KHR VMA_NULLABLE vkGetPhysicalDeviceProperties2KHR;
 #endif
 } VmaVulkanFunctions;
 
@@ -1335,6 +1352,19 @@ typedef struct VmaAllocationCreateInfo
     Otherwise, it has the priority of a memory block where it is placed and this variable is ignored.
     */
     float priority;
+    /** \brief Additional minimum alignment to be used for this allocation. Can be 0.
+
+    Leave 0 (default) not to impose any additional alignment. If not 0, it must be a power of two.
+
+    When creating a buffer or an image, specifying a custom alignment is not needed in most cases,
+    because Vulkan implementation inspects the `CreateInfo` structure (including intended usage flags)
+    and returns required alignment through functions like `vkGetBufferMemoryRequirements2`, which VMA automatically
+    uses and respects.
+    Extra alignment may be needed in some cases, like when using a buffer for acceleration structure scratch
+    (`VkPhysicalDeviceAccelerationStructurePropertiesKHR::minAccelerationStructureScratchOffsetAlignment`, see also issue #523)
+    or when doing interop with OpenGL.
+    */
+    VkDeviceSize minAlignment;
 } VmaAllocationCreateInfo;
 
 /// Describes parameter of created #VmaPool.
@@ -1378,8 +1408,14 @@ typedef struct VmaPoolCreateInfo
     /** \brief Additional minimum alignment to be used for all allocations created from this pool. Can be 0.
 
     Leave 0 (default) not to impose any additional alignment. If not 0, it must be a power of two.
-    It can be useful in cases where alignment returned by Vulkan by functions like `vkGetBufferMemoryRequirements` is not enough,
-    e.g. when doing interop with OpenGL.
+
+    When creating a buffer or an image, specifying a custom alignment is not needed in most cases,
+    because Vulkan implementation inspects the `CreateInfo` structure (including intended usage flags)
+    and returns required alignment through functions like `vkGetBufferMemoryRequirements2`, which VMA automatically
+    uses and respects.
+    Extra alignment may be needed in some cases, like when using a buffer for acceleration structure scratch
+    (`VkPhysicalDeviceAccelerationStructurePropertiesKHR::minAccelerationStructureScratchOffsetAlignment`, see also issue #523)
+    or when doing interop with OpenGL.
     */
     VkDeviceSize minAllocationAlignment;
     /** \brief Additional `pNext` chain to be attached to `VkMemoryAllocateInfo` used for every allocation made by this pool. Optional.
@@ -1820,20 +1856,20 @@ VMA_CALL_PRE void VMA_CALL_POST vmaGetHeapBudgets(
 */
 
 /**
-\brief Helps to find memoryTypeIndex, given memoryTypeBits and VmaAllocationCreateInfo.
+\brief Helps to find `memoryTypeIndex`, given `memoryTypeBits` and #VmaAllocationCreateInfo.
 
 This algorithm tries to find a memory type that:
 
-- Is allowed by memoryTypeBits.
-- Contains all the flags from pAllocationCreateInfo->requiredFlags.
+- Is allowed by `memoryTypeBits`.
+- Contains all the flags from `pAllocationCreateInfo->requiredFlags`.
 - Matches intended usage.
-- Has as many flags from pAllocationCreateInfo->preferredFlags as possible.
+- Has as many flags from `pAllocationCreateInfo->preferredFlags` as possible.
 
-\return Returns VK_ERROR_FEATURE_NOT_PRESENT if not found. Receiving such result
+\return Returns `VK_ERROR_FEATURE_NOT_PRESENT` if not found. Receiving such result
 from this function or any other allocating function probably means that your
 device doesn't support any memory type with requested features for the specific
 type of resource you want to use it for. Please check parameters of your
-resource, like image layout (OPTIMAL versus LINEAR) or mip level count.
+resource, like image layout (`OPTIMAL` versus `LINEAR`) or mip level count.
 */
 VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndex(
     VmaAllocator VMA_NOT_NULL allocator,
@@ -1842,10 +1878,10 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndex(
     uint32_t* VMA_NOT_NULL pMemoryTypeIndex);
 
 /**
-\brief Helps to find memoryTypeIndex, given VkBufferCreateInfo and VmaAllocationCreateInfo.
+\brief Helps to find `memoryTypeIndex`, given `VkBufferCreateInfo` and #VmaAllocationCreateInfo.
 
 It can be useful e.g. to determine value to be used as VmaPoolCreateInfo::memoryTypeIndex.
-It internally creates a temporary, dummy buffer that never has memory bound.
+It may need to internally create a temporary, dummy buffer that never has memory bound.
 */
 VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForBufferInfo(
     VmaAllocator VMA_NOT_NULL allocator,
@@ -1854,10 +1890,10 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForBufferInfo(
     uint32_t* VMA_NOT_NULL pMemoryTypeIndex);
 
 /**
-\brief Helps to find memoryTypeIndex, given VkImageCreateInfo and VmaAllocationCreateInfo.
+\brief Helps to find `memoryTypeIndex`, given `VkImageCreateInfo` and #VmaAllocationCreateInfo.
 
 It can be useful e.g. to determine value to be used as VmaPoolCreateInfo::memoryTypeIndex.
-It internally creates a temporary, dummy image that never has memory bound.
+It may need to internally create a temporary, dummy image that never has memory bound.
 */
 VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForImageInfo(
     VmaAllocator VMA_NOT_NULL allocator,
@@ -1962,21 +1998,46 @@ VMA_CALL_PRE void VMA_CALL_POST vmaSetPoolName(
 
 /** \brief General purpose memory allocation.
 
-\param allocator
-\param pVkMemoryRequirements
-\param pCreateInfo
+\param allocator The main allocator object.
+\param pVkMemoryRequirements Requirements for the allocated memory.
+\param pCreateInfo Allocation creation parameters.
 \param[out] pAllocation Handle to allocated memory.
-\param[out] pAllocationInfo Optional. Information about allocated memory. It can be later fetched using function vmaGetAllocationInfo().
+\param[out] pAllocationInfo Optional, can be null. Information about allocated memory. It can be also fetched later using vmaGetAllocationInfo().
 
-You should free the memory using vmaFreeMemory() or vmaFreeMemoryPages().
+The function creates a #VmaAllocation object without creating a buffer or an image together with it.
 
-It is recommended to use vmaAllocateMemoryForBuffer(), vmaAllocateMemoryForImage(),
-vmaCreateBuffer(), vmaCreateImage() instead whenever possible.
+- It is recommended to use vmaAllocateMemoryForBuffer(), vmaAllocateMemoryForImage(),
+  vmaCreateBuffer(), vmaCreateImage() instead whenever possible.
+- You can also create a buffer or an image later in an existing allocation using
+  vmaCreateAliasingBuffer2(), vmaCreateAliasingImage2().
+- You can also create a buffer or an image on your own and bind it to an existing allocation
+  using vmaBindBufferMemory2(), vmaBindImageMemory2().
+
+You must free the returned allocation object using vmaFreeMemory() or vmaFreeMemoryPages().
+
+There is also extended version of this function: vmaAllocateDedicatedMemory()
+that offers additional parameter `pMemoryAllocateNext`.
 */
 VMA_CALL_PRE VkResult VMA_CALL_POST vmaAllocateMemory(
     VmaAllocator VMA_NOT_NULL allocator,
     const VkMemoryRequirements* VMA_NOT_NULL pVkMemoryRequirements,
     const VmaAllocationCreateInfo* VMA_NOT_NULL pCreateInfo,
+    VmaAllocation VMA_NULLABLE* VMA_NOT_NULL pAllocation,
+    VmaAllocationInfo* VMA_NULLABLE pAllocationInfo);
+
+/** \brief General purpose allocation of a dedicated memory.
+
+This function is similar vmaAllocateMemory(), but
+it always allocates dedicated memory - flag #VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT is implied.
+It offers additional parameter `pMemoryAllocateNext`,
+which can be used to attach `pNext` chain to the `VkMemoryAllocateInfo` structure.
+It can be useful for importing external memory. For more information, see \ref other_api_interop.
+*/
+VMA_CALL_PRE VkResult VMA_CALL_POST vmaAllocateDedicatedMemory(
+    VmaAllocator VMA_NOT_NULL allocator,
+    const VkMemoryRequirements* VMA_NOT_NULL pVkMemoryRequirements,
+    const VmaAllocationCreateInfo* VMA_NOT_NULL pCreateInfo,
+    void* VMA_NULLABLE VMA_EXTENDS_VK_STRUCT(VkMemoryAllocateInfo) pMemoryAllocateNext,
     VmaAllocation VMA_NULLABLE* VMA_NOT_NULL pAllocation,
     VmaAllocationInfo* VMA_NULLABLE pAllocationInfo);
 
@@ -2142,13 +2203,16 @@ VMA_CALL_PRE void VMA_CALL_POST vmaGetAllocationMemoryProperties(
 /**
 \brief Given an allocation, returns Win32 handle that may be imported by other processes or APIs.
 
-\param hTargetProcess Must be a valid handle to target process or null. If it's null, the function returns
+\param allocator The main allocator object.
+\param allocation Allocation.
+\param hTargetProcess A valid handle to target process or null. If it's null, the function returns
     handle for the current process.
 \param[out] pHandle Output parameter that returns the handle.
 
 The function fills `pHandle` with handle that can be used in target process.
 The handle is fetched using function `vkGetMemoryWin32HandleKHR`.
-When no longer needed, you must close it using:
+
+Each call to this function creates a new handle that must be closed using:
 
 \code
 CloseHandle(handle);
@@ -2161,14 +2225,76 @@ Note the handle is returned for the entire `VkDeviceMemory` block that the alloc
 If the allocation is sub-allocated from a larger block, you may need to consider the offset of the allocation
 (VmaAllocationInfo::offset).
 
+This function always uses `VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT`.
+An extended version of this function is available as vmaGetMemoryWin32Handle2()
+that allows using other handle type.
+
+This function is available compile-time only when VK_KHR_external_memory_win32 extension is available.
+It can be manually disabled by predefining `VMA_EXTERNAL_MEMORY_WIN32=0` macro.
+
 If the function fails with `VK_ERROR_FEATURE_NOT_PRESENT` error code, please double-check
-that VmaVulkanFunctions::vkGetMemoryWin32HandleKHR function pointer is set, e.g. either by using `VMA_DYNAMIC_VULKAN_FUNCTIONS`
+that VmaVulkanFunctions::vkGetMemoryWin32HandleKHR function pointer is set, e.g.
+either by using macro `VMA_DYNAMIC_VULKAN_FUNCTIONS`
 or by manually passing it through VmaAllocatorCreateInfo::pVulkanFunctions.
 
-For more information, see chapter \ref vk_khr_external_memory_win32.
+For more information, see chapter \ref other_api_interop.
 */
-VMA_CALL_PRE VkResult VMA_CALL_POST vmaGetMemoryWin32Handle(VmaAllocator VMA_NOT_NULL allocator,
-    VmaAllocation VMA_NOT_NULL allocation, HANDLE hTargetProcess, HANDLE* VMA_NOT_NULL pHandle);
+VMA_CALL_PRE VkResult VMA_CALL_POST vmaGetMemoryWin32Handle(
+    VmaAllocator VMA_NOT_NULL allocator,
+    VmaAllocation VMA_NOT_NULL allocation,
+    HANDLE hTargetProcess,
+    HANDLE* VMA_NOT_NULL pHandle);
+
+/**
+\brief Given an allocation, returns Win32 handle that may be imported by other processes or APIs.
+
+\param allocator The main allocator object.
+\param allocation Allocation.
+\param handleType Type of handle to be exported. It should be one of:
+    - `VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT_KHR`
+    - `VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT_KHR`
+    - `VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT_KHR`
+    - `VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT_KHR`
+    - `VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT_KHR`
+    - `VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT_KHR`
+\param hTargetProcess A valid handle to target process or null. If it's null, the function returns
+    handle for the current process.
+\param[out] pHandle Output parameter that returns the handle.
+
+The function fills `pHandle` with handle that can be used in target process.
+The handle is fetched using function `vkGetMemoryWin32HandleKHR`.
+
+If `handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT_KHR`,
+or other NT handle types,
+each call to this function creates a new handle that must be closed using:
+
+\code
+CloseHandle(handle);
+\endcode
+
+You can close it any time, before or after destroying the allocation object.
+It is reference-counted internally by Windows.
+
+Note the handle is returned for the entire `VkDeviceMemory` block that the allocation belongs to.
+If the allocation is sub-allocated from a larger block, you may need to consider the offset of the allocation
+(VmaAllocationInfo::offset).
+
+This function is available compile-time only when VK_KHR_external_memory_win32 extension is available.
+It can be manually disabled by predefining `VMA_EXTERNAL_MEMORY_WIN32=0` macro.
+
+If the function fails with `VK_ERROR_FEATURE_NOT_PRESENT` error code, please double-check
+that VmaVulkanFunctions::vkGetMemoryWin32HandleKHR function pointer is set, e.g.
+either by using macro `VMA_DYNAMIC_VULKAN_FUNCTIONS`
+or by manually passing it through VmaAllocatorCreateInfo::pVulkanFunctions.
+
+For more information, see chapter \ref other_api_interop.
+*/
+VMA_CALL_PRE VkResult VMA_CALL_POST vmaGetMemoryWin32Handle2(
+    VmaAllocator VMA_NOT_NULL allocator,
+    VmaAllocation VMA_NOT_NULL allocation,
+    VkExternalMemoryHandleTypeFlagBits handleType,
+    HANDLE hTargetProcess,
+    HANDLE* VMA_NOT_NULL pHandle);
 #endif // VMA_EXTERNAL_MEMORY_WIN32
 
 /** \brief Maps memory represented by given allocation and returns pointer to it.
@@ -2541,12 +2667,13 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaBindImageMemory2(
 
 /** \brief Creates a new `VkBuffer`, allocates and binds memory for it.
 
-\param allocator
-\param pBufferCreateInfo
-\param pAllocationCreateInfo
+\param allocator The main allocator object.
+\param pBufferCreateInfo Buffer creation parameters.
+\param pAllocationCreateInfo Allocation creation parameters.
 \param[out] pBuffer Buffer that was created.
 \param[out] pAllocation Allocation that was created.
-\param[out] pAllocationInfo Optional. Information about allocated memory. It can be later fetched using function vmaGetAllocationInfo().
+\param[out] pAllocationInfo Optional, can be null. Information about allocated memory.
+    It can be also fetched later using vmaGetAllocationInfo().
 
 This function automatically:
 
@@ -2555,14 +2682,14 @@ This function automatically:
 -# Binds the buffer with the memory.
 
 If any of these operations fail, buffer and allocation are not created,
-returned value is negative error code, `*pBuffer` and `*pAllocation` are null.
+returned value is negative error code, `*pBuffer` and `*pAllocation` are returned as null.
 
 If the function succeeded, you must destroy both buffer and allocation when you
 no longer need them using either convenience function vmaDestroyBuffer() or
 separately, using `vkDestroyBuffer()` and vmaFreeMemory().
 
-If #VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT flag was used,
-VK_KHR_dedicated_allocation extension is used internally to query driver whether
+If VK_KHR_dedicated_allocation extenion or Vulkan version >= 1.1 is used,
+the function queries the driver whether
 it requires or prefers the new buffer to have dedicated allocation. If yes,
 and if dedicated allocation is possible
 (#VMA_ALLOCATION_CREATE_NEVER_ALLOCATE_BIT is not used), it creates dedicated
@@ -2572,6 +2699,9 @@ allocation for this buffer, just like when using
 \note This function creates a new `VkBuffer`. Sub-allocation of parts of one large buffer,
 although recommended as a good practice, is out of scope of this library and could be implemented
 by the user as a higher-level logic on top of VMA.
+
+There is also an extended versions of this function available with additional parameter `pMemoryAllocateNext` -
+see vmaCreateDedicatedBuffer().
 */
 VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateBuffer(
     VmaAllocator VMA_NOT_NULL allocator,
@@ -2586,12 +2716,33 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateBuffer(
 Similar to vmaCreateBuffer() but provides additional parameter `minAlignment` which allows to specify custom,
 minimum alignment to be used when placing the buffer inside a larger memory block, which may be needed e.g.
 for interop with OpenGL.
+
+\deprecated
+This function in obsolete since new VmaAllocationCreateInfo::minAlignment member allows specifying custom
+alignment while using any allocation function, like the standard vmaCreateBuffer().
 */
 VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateBufferWithAlignment(
     VmaAllocator VMA_NOT_NULL allocator,
     const VkBufferCreateInfo* VMA_NOT_NULL pBufferCreateInfo,
     const VmaAllocationCreateInfo* VMA_NOT_NULL pAllocationCreateInfo,
     VkDeviceSize minAlignment,
+    VkBuffer VMA_NULLABLE_NON_DISPATCHABLE* VMA_NOT_NULL pBuffer,
+    VmaAllocation VMA_NULLABLE* VMA_NOT_NULL pAllocation,
+    VmaAllocationInfo* VMA_NULLABLE pAllocationInfo);
+
+/** \brief Creates a dedicated buffer while offering extra parameter `pMemoryAllocateNext`.
+
+This function is similar vmaCreateBuffer(), but
+it always allocates dedicated memory for the buffer - flag #VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT is implied.
+It offers additional parameter `pMemoryAllocateNext`,
+which can be used to attach `pNext` chain to the `VkMemoryAllocateInfo` structure.
+It can be useful for importing external memory. For more information, see \ref other_api_interop.
+*/
+VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateDedicatedBuffer(
+    VmaAllocator VMA_NOT_NULL allocator,
+    const VkBufferCreateInfo* VMA_NOT_NULL pBufferCreateInfo,
+    const VmaAllocationCreateInfo* VMA_NOT_NULL pAllocationCreateInfo,
+    void* VMA_NULLABLE VMA_EXTENDS_VK_STRUCT(VkMemoryAllocateInfo) pMemoryAllocateNext,
     VkBuffer VMA_NULLABLE_NON_DISPATCHABLE* VMA_NOT_NULL pBuffer,
     VmaAllocation VMA_NULLABLE* VMA_NOT_NULL pAllocation,
     VmaAllocationInfo* VMA_NULLABLE pAllocationInfo);
@@ -2668,11 +2819,32 @@ VMA_CALL_PRE void VMA_CALL_POST vmaDestroyBuffer(
     VkBuffer VMA_NULLABLE_NON_DISPATCHABLE buffer,
     VmaAllocation VMA_NULLABLE allocation);
 
-/// Function similar to vmaCreateBuffer().
+/** \brief Function similar to vmaCreateBuffer() but for images.
+
+There is also an extended version of this function available: vmaCreateDedicatedImage()
+which offers additional parameter `pMemoryAllocateNext`.
+*/
 VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateImage(
     VmaAllocator VMA_NOT_NULL allocator,
     const VkImageCreateInfo* VMA_NOT_NULL pImageCreateInfo,
     const VmaAllocationCreateInfo* VMA_NOT_NULL pAllocationCreateInfo,
+    VkImage VMA_NULLABLE_NON_DISPATCHABLE* VMA_NOT_NULL pImage,
+    VmaAllocation VMA_NULLABLE* VMA_NOT_NULL pAllocation,
+    VmaAllocationInfo* VMA_NULLABLE pAllocationInfo);
+
+/** \brief Function similar to vmaCreateDedicatedBuffer() but for images.
+
+This function is similar vmaCreateImage(), but
+it always allocates dedicated memory for the image - flag #VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT is implied.
+It offers additional parameter `pMemoryAllocateNext`,
+which can be used to attach `pNext` chain to the `VkMemoryAllocateInfo` structure.
+It can be useful for importing external memory. For more information, see \ref other_api_interop.
+*/
+VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateDedicatedImage(
+    VmaAllocator VMA_NOT_NULL allocator,
+    const VkImageCreateInfo* VMA_NOT_NULL pImageCreateInfo,
+    const VmaAllocationCreateInfo* VMA_NOT_NULL pAllocationCreateInfo,
+    void* VMA_NULLABLE VMA_EXTENDS_VK_STRUCT(VkMemoryAllocateInfo) pMemoryAllocateNext,
     VkImage VMA_NULLABLE_NON_DISPATCHABLE* VMA_NOT_NULL pImage,
     VmaAllocation VMA_NULLABLE* VMA_NOT_NULL pAllocation,
     VmaAllocationInfo* VMA_NULLABLE pAllocationInfo);

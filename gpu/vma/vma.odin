@@ -1,73 +1,73 @@
 package vma
 
-when ODIN_OS == .Linux {
-	@(require, extra_linker_flags = "-lstdc++")
-	foreign import stdcpp "system:stdc++"
-}
-when ODIN_OS == .Darwin {
-	@(require)
-	foreign import stdcpp "system:c++"
-}
-
 when ODIN_OS == .Windows {
 	when ODIN_ARCH == .amd64 {
+		@export
 		@(extra_linker_flags="/NODEFAULTLIB:libcmt /NODEFAULTLIB:libucrt")
-		foreign import _lib_ "vma_windows_x86_64.lib"
+		foreign import vmalib "vma_windows_x86_64.lib"
 	} else when ODIN_ARCH == .arm64 {
+		@export
 		@(extra_linker_flags="/NODEFAULTLIB:libcmt /NODEFAULTLIB:libucrt")
-		foreign import _lib_ "vma_windows_ARM64.lib"
+		foreign import vmalib "vma_windows_ARM64.lib"
 	} else {
 		#panic("Unsupported architecture for VMA library on Windows")
 	}
 } else when ODIN_OS == .Darwin {
 	when ODIN_ARCH == .amd64 {
-		foreign import _lib_ "libvma_macosx_x86_64.a"
+		@export
+		foreign import vmalib { "libvma_macosx_x86_64.a", "system:stdc++" }
 	} else when ODIN_ARCH == .arm64 {
-		foreign import _lib_ "libvma_macosx_ARM64.a"
+		@export
+		foreign import vmalib { "libvma_macosx_x86_64.a", "system:stdc++" }
 	} else {
 		#panic("Unsupported architecture for VMA library on MacOSX")
 	}
 } else when ODIN_OS == .Linux {
 	when ODIN_ARCH == .amd64 {
-		foreign import _lib_ "libvma_linux_x86_64.a"
+		@export
+		foreign import vmalib { "libvma_linux_x86_64.a", "system:stdc++" }
 	} else when ODIN_ARCH == .arm64 {
-		foreign import _lib_ "libvma_linux_ARM64.a"
+		@export
+		foreign import vmalib { "libvma_linux_x86_64.a", "system:stdc++" }
 	} else {
 		#panic("Unsupported architecture for VMA library on Linux")
 	}
 } else {
-	foreign import _lib_ "system:libvma"
+	@export
+	foreign import vmalib "system:libvma"
 }
 
 // Vendor
 import vk "vendor:vulkan"
 
+// VMA Version - vk.MAKE_VERSION()
+VMA_VERSION: u32 : (3 << 22) | (4 << 12) | (0)
+
 // Flags for created `Allocator`.
-Allocator_Create_Flags :: bit_set[Allocator_Create_Flag;u32]
-Allocator_Create_Flag :: enum u32 {
+AllocatorCreateFlags :: bit_set[AllocatorCreateFlag; vk.Flags]
+AllocatorCreateFlag :: enum i32 {
 	// Allocator and all objects created from it will not be synchronized
-	// internally, so you must  guarantee they are used from only one thread at a
+	// internally, so you must guarantee they are used from only one thread at a
 	// time or synchronized externally by you.
 	//
-	// Using this flag may increase performance because internal mutexes are not
-	// used.
-	Externally_Synchronized,
+	// Using this flag may increase performance because internal mutexes are not used.
 
+	EXTERNALLY_SYNCHRONIZED,
 	// Enables usage of `VK_KHR_dedicated_allocation` extension.
 	//
-	// The flag works only if `Allocator_Create_Info.vulkan_api_version ==
+	// The flag works only if `vma.AllocatorCreateInfo.vulkanApiVersion` `==
 	// vk.API_VERSION_1_0`. When it is `vk.API_VERSION_1_1`, the flag is ignored
 	// because the extension has been promoted to Vulkan 1.1.
 	//
-	// Using this extension will automatically allocate dedicated blocks of memory
-	// for some buffers and images instead of suballocating place for them out of
-	// bigger memory blocks (as if you explicitly used
-	// `Allocation_Create_Flag.Dedicated_Memory` flag) when it is recommended by
-	// the driver. It may improve performance on some GPUs.
+	// Using this extension will automatically allocate dedicated blocks of
+	// memory for some buffers and images instead of suballocating place for
+	// them out of bigger memory blocks (as if you explicitly used
+	// `DEDICATED_MEMORY` flag) when it is recommended by the driver. It may
+	// improve performance on some GPUs.
 	//
 	// You may set this flag only if you found out that following device
 	// extensions are supported, you enabled them while creating Vulkan device
-	// passed as `Allocator_Create_Info.device`, and you want them to be used
+	// passed as vma.AllocatorCreateInfo.device, and you want them to be used
 	// internally by this library:
 	//
 	// - `VK_KHR_get_memory_requirements2` (device extension)
@@ -76,1027 +76,1695 @@ Allocator_Create_Flag :: enum u32 {
 	// When this flag is set, you can experience following warnings reported by
 	// Vulkan validation layer. You can ignore them.
 	//
-	// - vkBindBufferMemory(): Binding memory to buffer 0x2d but
-	// - vkGetBufferMemoryRequirements() has not been called on that buffer.
-	Khr_Dedicated_Allocation,
+	// > `vk.bindBufferMemory()`: Binding memory to buffer `0x2d` but
+	// `vk.etBufferMemoryRequirements()` has not been called on that buffer.
+	KHR_DEDICATED_ALLOCATION,
 
 	// Enables usage of `VK_KHR_bind_memory2` extension.
 	//
-	// The flag works only if `Allocator_Create_Info.vulkan_api_version ==
+	// The flag works only if `vma.AllocatorCreateInfo.vulkanApiVersion` `==
 	// vk.API_VERSION_1_0`. When it is `vk.API_VERSION_1_1`, the flag is ignored
 	// because the extension has been promoted to Vulkan 1.1.
 	//
 	// You may set this flag only if you found out that this device extension is
 	// supported, you enabled it while creating Vulkan device passed as
-	// `Allocator_Create_Info.device`, and you want it to be used internally by
-	// this library.
+	// vma.AllocatorCreateInfo.device, and you want it to be used internally by this library.
 	//
-	// The extension provides functions `vk.BindBufferMemory2KHR` and
-	// `vk.BindImageMemory2KHR`, which allow to pass a chain of `pNext` structures
-	// while binding. This flag is required if you use `pNext` parameter in
-	// `vk.aBindBufferMemory2()` or `vk.aBindImageMemory2()`.
-	Khr_Bind_Memory2,
+	// The extension provides functions `vk.indBufferMemory2KHR` and
+	// `vk.indImageMemory2KHR`, which allow to pass a chain of `pNext`
+	// structures while binding. This flag is required if you use `pNext`
+	// parameter in `vma.bindBufferMemory2()` or `vma.bindImageMemory2()`.
+	KHR_BIND_MEMORY2,
 
 	// Enables usage of `VK_EXT_memory_budget` extension.
 	//
 	// You may set this flag only if you found out that this device extension is
 	// supported, you enabled it while creating Vulkan device passed as
-	// `Allocator_Create_Info.device`, and you want it to be used internally by
+	// `vma.AllocatorCreateInfo.device`, and you want it to be used internally by
 	// this library, along with another instance extension
 	// `VK_KHR_get_physical_device_properties2`, which is required by it (or
 	// Vulkan 1.1, where this extension is promoted).
 	//
 	// The extension provides query for current memory usage and budget, which
-	// will probably be more accurate than an estimation used by the library
-	// otherwise.
-	Ext_Memory_Budget,
+	// will probably be more accurate than an estimation used by the library otherwise.
+	EXT_MEMORY_BUDGET,
 
 	// Enables usage of `VK_AMD_device_coherent_memory` extension.
 	//
 	// You may set this flag only if you:
 	//
 	// - found out that this device extension is supported and enabled it while
-	//   creating Vulkan device passed as `Allocator_Create_Info.device`,
+	//   creating Vulkan device passed as `vma.AllocatorCreateInfo.device`,
 	// - checked that
-	//   `vk.PhysicalDeviceCoherentMemoryFeaturesAMD.deviceCoherentMemory` is true
-	//   and set it while creating the Vulkan device,
+	//   `vk.PhysicalDeviceCoherentMemoryFeaturesAMD.deviceCoherentMemory` is
+	//   `true` and set it while creating the Vulkan device,
 	// - want it to be used internally by this library.
 	//
 	// The extension and accompanying device feature provide access to memory
-	// types with `VK_MEMORY_PROPERTY_DEVICE_COHERENT_AMD` and
-	// `VK_MEMORY_PROPERTY_DEVICE_UNCACHED_AMD` flags. They are useful mostly for
-	// writing breadcrumb markers - a common method for debugging GPU
+	// types with `COHERENT_AMD` and `UNCACHED_AMD` flags. They are useful
+	// mostly for writing breadcrumb markers - a common method for debugging GPU
 	// crash/hang/TDR.
 	//
-	// When the extension is not enabled, such memory types are still enumerated,
-	// but their usage is illegal. To protect from this error, if you don't create
-	// the allocator with this flag, it will refuse to allocate any memory or
-	// create a custom pool in such memory type, returning
-	// `vk.ERROR_FEATURE_NOT_PRESENT`.
-	Amd_Device_Coherent_Memory,
-	Buffer_Device_Address,
-	Ext_Memory_Priority,
-	Khr_Maintenance4,
-	Khr_Maintenance5,
-	Khr_External_Memory_Win32,
+	// When the extension is not enabled, such memory types are still
+	// enumerated, but their usage is illegal. To protect from this error, if
+	// you don't create the allocator with this flag, it will refuse to allocate
+	// any memory or create a custom pool in such memory type, returning
+	// `vk.Result.ERROR_FEATURE_NOT_PRESENT`.
+	AMD_DEVICE_COHERENT_MEMORY,
+
+	// Enables usage of "buffer device address" feature, which allows you to use
+	// function `vk.getBufferDeviceAddress*` to get raw GPU pointer to a buffer
+	// and pass it for usage inside a shader.
+	//
+	// You may set this flag only if you:
+	//
+	// 1. (For Vulkan version < 1.2) Found as available and enabled device
+	//    extension `VK_KHR_buffer_device_address`. This extension is promoted
+	//    to core Vulkan 1.2.
+	// 2. Found as available and enabled device feature
+	//    `vk.PhysicalDeviceBufferDeviceAddressFeatures.bufferDeviceAddress`.
+	//
+	// When this flag is set, you can create buffers with
+	// `vk.BufferUsageFlags.SHADER_DEVICE_ADDRESS` using VMA. The library
+	// automatically adds `vk.MemoryAllocateFlags.DEVICE_ADDRESS` to allocated
+	// memory blocks wherever it might be needed.
+	BUFFER_DEVICE_ADDRESS,
+
+	// Enables usage of `VK_EXT_memory_priority` extension in the library.
+	//
+	// You may set this flag only if you found available and enabled this device
+	// extension, along with
+	// `vk.PhysicalDeviceMemoryPriorityFeaturesEXT.memoryPriority == true`,
+	// while creating Vulkan device passed as `vma.AllocatorCreateInfo.device`.
+	//
+	// When this flag is used, `vma.AllocationCreateInfo.priority` and
+	// `vma.PoolCreateInfo.priority` are used to set priorities of allocated
+	// Vulkan memory. Without it, these variables are ignored.
+	//
+	// A priority must be a floating-point value between 0 and 1, indicating the
+	// priority of the allocation relative to other memory allocations. Larger
+	// values are higher priority. The granularity of the priorities is
+	// implementation-dependent. It is automatically passed to every call to
+	// `vk.allocateMemory` done by the library using structure
+	// `vk.MemoryPriorityAllocateInfoEXT`. The value to be used for default
+	// priority is 0.5. For more details, see the documentation of the
+	// `VK_EXT_memory_priority` extension.
+	EXT_MEMORY_PRIORITY,
+
+	// Enables usage of `VK_KHR_maintenance4` extension in the library.
+	//
+	// You may set this flag only if you found available and enabled this device
+	// extension, while creating Vulkan device passed as
+	// `vma.AllocatorCreateInfo.device`.
+	KHR_MAINTENANCE4,
+
+	// Enables usage of `VK_KHR_maintenance5` extension in the library.
+	//
+	// You should set this flag if you found available and enabled this device
+	// extension, while creating Vulkan device passed as
+	// `vma.AllocatorCreateInfo.device`.
+	KHR_MAINTENANCE5,
+
+	// Enables usage of `VK_KHR_external_memory_win32` extension in the library.
+	//
+	// You should set this flag if you found available and enabled this device
+	// extension, while creating Vulkan device passed as
+	// `vma.AllocatorCreateInfo.device`.
+	KHR_EXTERNAL_MEMORY_WIN32,
 }
 
 // Intended usage of the allocated memory.
-Memory_Usage :: enum u32 {
-	// No intended memory usage specified. Use other members of
-	// `Allocation_Create_Info` to specify your requirements.
-	Unknown,
-	Gpu_Only,
-	Cpu_Only,
-	Cpu_To_Gpu,
-	Gpu_To_Cpu,
-	Cpu_Copy,
-	Gpu_Lazily_Allocated,
-	Auto,
-	Auto_Prefer_Device,
-	Auto_Prefer_Host,
+MemoryUsage :: enum i32 {
+	// No intended memory usage specified.
+	//
+	// Use other members of `vma.AllocationCreateInfo` to specify your requirements.
+	UNKNOWN,
+	// **Deprecated**: Obsolete, preserved for backward compatibility.
+	//
+	// Prefers `vk.MemoryPropertyFlags.DEVICE_LOCAL`.
+	GPU_ONLY,
+	// **Deprecated**: Obsolete, preserved for backward compatibility.
+	//
+	// Guarantees `vk.MemoryPropertyFlags.HOST_VISIBLE` and
+	// `vk.MemoryPropertyFlags.HOST_COHERENT`.
+	CPU_ONLY,
+	// **Deprecated**: Obsolete, preserved for backward compatibility.
+	//
+	// Guarantees `vk.MemoryPropertyFlags.HOST_VISIBLE`, prefers
+	// `vk.MemoryPropertyFlags.DEVICE_LOCAL`.
+	CPU_TO_GPU,
+	// **Deprecated**: Obsolete, preserved for backward compatibility.
+	//
+	// Guarantees `vk.MemoryPropertyFlags.HOST_VISIBLE`, prefers
+	// `vk.MemoryPropertyFlags.HOST_CACHED`.
+	GPU_TO_CPU,
+	// **Deprecated**: Obsolete, preserved for backward compatibility.
+
+	// Prefers not `vk.MemoryPropertyFlags.DEVICE_LOCAL`.
+	CPU_COPY,
+	// Lazily allocated GPU memory having `vk.MemoryPropertyFlags.LAZILY_ALLOCATED`.
+	// Exists mostly on mobile platforms. Using it on desktop PC or other GPUs
+	// with no such memory type present will fail the allocation.
+	//
+	// Usage: Memory for transient attachment images (color attachments, depth
+	// attachments etc.), created with `vk.ImageUsageFlags.TRANSIENT_ATTACHMENT`.
+	//
+	// Allocations with this usage are always created as dedicated - it implies
+	// `vma.AllocationCreateFlags.DEDICATED_MEMORY`.
+	GPU_LAZILY_ALLOCATED,
+	// Selects best memory type automatically. This flag is recommended for most
+	// common use cases.
+	//
+	// When using this flag, if you want to map the allocation (using
+	// `vma.MapMemory()` or `vma.AllocationCreateFlags.MAPPED`), you must pass
+	// one of the flags: `.HOST_ACCESS_SEQUENTIAL_WRITE` or `.HOST_ACCESS_RANDOM` in
+	// `vma.AllocationCreateInfo.flags`.
+	//
+	// It can be used only with functions that let the library know
+	// `vk.BufferCreateInfo` or `vk.ImageCreateInfo`, e.g. `vma.CreateBuffer()`,
+	// `vma.CreateImage()`, `vma.FindMemoryTypeIndexForBufferInfo()`,
+	// `vma.FindMemoryTypeIndexForImageInfo()` and not with generic memory
+	// allocation functions.
+	AUTO,
+	// Selects best memory type automatically with preference for GPU (device) memory.
+	//
+	// When using this flag, if you want to map the allocation (using
+	// `vma.MapMemory()` or `vma.AllocationCreateFlags.MAPPED`), you must pass
+	// one of the flags: `.HOST_ACCESS_SEQUENTIAL_WRITE` or
+	// `.HOST_ACCESS_RANDOM` in `vma.AllocationCreateInfo.flags`.
+	//
+	// It can be used only with functions that let the library know
+	// `vk.BufferCreateInfo` or `vk.ImageCreateInfo`, e.g. `vma.CreateBuffer()`,
+	// `vma.CreateImage()`, `vma.FindMemoryTypeIndexForBufferInfo()`,
+	// `vma.FindMemoryTypeIndexForImageInfo()` and not with generic memory
+	// allocation functions.
+	AUTO_PREFER_DEVICE,
+	// Selects best memory type automatically with preference for CPU (host) memory.
+	//
+	// When using this flag, if you want to map the allocation (using
+	// `vma.MapMemory()` or `vma.AllocationCreateFlags.MAPPED`.), you must pass
+	// one of the flags: `.HOST_ACCESS_SEQUENTIAL_WRITE` or
+	// `.HOST_ACCESS_RANDOM` in `vma.AllocationCreateInfo.flags`.
+	//
+	// It can be used only with functions that let the library know
+	// `vk.BufferCreateInfo` or `vk.ImageCreateInfo`, e.g. `vma.CreateBuffer()`,
+	// `vma.CreateImage()`, `vma.FindMemoryTypeIndexForBufferInfo()`,
+	// `vma.FindMemoryTypeIndexForImageInfo()` and not with generic memory
+	// allocation functions.
+	AUTO_PREFER_HOST,
 }
 
-// Flags to be passed as Allocation_Create_Info::flags.
-Allocation_Create_Flags :: bit_set[Allocation_Create_Flag;u32]
-Allocation_Create_Flag :: enum u32 {
-	Dedicated_Memory                   = 0,
-	Never_Allocate                     = 1,
-	Mapped                             = 2,
-	User_Data_Copy_String              = 5,
-	Upper_Address                      = 6,
-	Dont_Bind                          = 7,
-	Within_Budget                      = 8,
-	Can_Alias                          = 9,
-	Host_Access_Sequential_Write       = 10,
-	Host_Access_Random                 = 11,
-	Host_Access_Allow_Transfer_Instead = 12,
-	Strategy_Min_Memory                = 16,
-	Strategy_Min_Time                  = 17,
-	Strategy_Min_Offset                = 18,
+// Flags to be passed as AllocationCreateInfo::flags.
+AllocationCreateFlags :: bit_set[AllocationCreateFlag; vk.Flags]
+AllocationCreateFlag :: enum {
+	// Set this flag if the allocation should have its own memory block.
+	//
+	// Use it for special, big resources, like fullscreen images used as attachments.
+	//
+	// If you use this flag while creating a buffer or an image,
+	// `vk.MemoryDedicatedAllocateInfo` structure is applied if possible.
+	DEDICATED_MEMORY                   = 0,
+
+	// Set this flag to only try to allocate from existing `vk.DeviceMemory`
+	// blocks and never create new such block.
+	//
+	// If new allocation cannot be placed in any of the existing blocks,
+	// allocation fails with `vk.Result.ERROR_OUT_OF_DEVICE_MEMORY` error.
+	//
+	// You should not use `DEDICATED_MEMORY` and `NEVER_ALLOCATE` at the same
+	// time. It makes no sense.
+	NEVER_ALLOCATE                     = 1,
+	// Set this flag to use a memory that will be persistently mapped and
+	// retrieve pointer to it.
+	//
+	// Pointer to mapped memory will be returned through
+	// `vma.AllocationInfo.pMappedData`.
+	//
+	// It is valid to use this flag for allocation made from memory type that is
+	// not `HOST_VISIBLE`. This flag is then ignored and memory is not mapped.
+	// This is useful if you need an allocation that is efficient to use on GPU
+	// (`DEVICE_LOCAL`) and still want to map it directly if possible on
+	// platforms that support it (e.g. Intel GPU).
+	MAPPED                             = 2,
+	// **Deprecated**: Preserved for backward compatibility. Consider using
+	// `vma.SetAllocationName()` instead.
+	//
+	// Set this flag to treat `vma.AllocationCreateInfo.pUserData` as pointer to
+	// a nil-terminated string. Instead of copying pointer value, a local copy
+	// of the string is made and stored in allocation's `pName`. The string is
+	// automatically freed together with the allocation. It is also used in
+	// `vma.BuildStatsString()`.
+	USER_DATA_COPY_STRING              = 5,
+	// Allocation will be created from upper stack in a double stack pool.
+	//
+	// This flag is only allowed for custom pools created with
+	// `vma.PoolCreateFlags.LINEAR_ALGORITHM` flag.
+	UPPER_ADDRESS                      = 6,
+	// Create both buffer/image and allocation, but don't bind them together. It
+	// is useful when you want to bind yourself to do some more advanced
+	// binding, e.g. using some extensions. The flag is meaningful only with
+	// functions that bind by default: `vma.CreateBuffer()`, `vma.CreateImage()`.
+	// Otherwise it is ignored.
+	//
+	// If you want to make sure the new buffer/image is not tied to the new
+	// memory allocation through `vk.MemoryDedicatedAllocateInfoKHR` structure in
+	// case the allocation ends up in its own memory block, use also flag `CAN_ALIAS`.
+	DONT_BIND                          = 7,
+	// Create allocation only if additional device memory required for it, if
+	// any, won't exceed memory budget. Otherwise return
+	// `vk.Result.ERROR_OUT_OF_DEVICE_MEMORY`.
+	WITHIN_BUDGET                      = 8,
+	// Set this flag if the allocated memory will have aliasing resources.
+	//
+	// Usage of this flag prevents supplying `vk.MemoryDedicatedAllocateInfoKHR`
+	// when `DEDICATED_MEMORY` is specified. Otherwise created dedicated memory
+	// will not be suitable for aliasing resources, resulting in Vulkan
+	// Validation Layer errors.
+	CAN_ALIAS                          = 9,
+	// Requests possibility to map the allocation (using `vma.MapMemory()` or `.MAPPED`).
+	//
+	// - If you use `MemoryUsage.AUTO` or other `MemoryUsage.AUTO*`
+	//   value, you must use this flag to be able to map the allocation.
+	//   Otherwise, mapping is incorrect.
+	// - If you use other value of `MemoryUsage`, this flag is ignored and
+	//   mapping is always possible in memory types that are `HOST_VISIBLE`.
+	//   This includes allocations created in custom memory pools.
+	//
+	// Declares that mapped memory will only be written sequentially, e.g. using
+	// `memcpy()` or a loop writing number-by-number, never read or accessed
+	// randomly, so a memory type can be selected that is uncached and
+	// write-combined.
+	//
+	// Warning! Violating this declaration may work correctly, but will likely
+	// be very slow. Watch out for implicit reads introduced by doing e.g.
+	// `pMappedData[i] += x;` Better prepare your data in a local variable and
+	// `memcpy()` it to the mapped pointer all at once.
+	HOST_ACCESS_SEQUENTIAL_WRITE       = 10,
+	// Requests possibility to map the allocation (using `vma.MapMemory()` or `MAPPED`).
+	//
+	// - If you use `MemoryUsage.AUTO` or other `MemoryUsage.AUTO*` value, you
+	//   must use this flag to be able to map the allocation. Otherwise, mapping
+	//   is incorrect.
+	// - If you use other value of `MemoryUsage`, this flag is ignored and
+	//   mapping is always possible in memory types that are `HOST_VISIBLE`.
+	//   This includes allocations created in custom memory pools.
+	//
+	// Declares that mapped memory can be read, written, and accessed in random
+	// order, so a `HOST_CACHED` memory type is preferred.
+	HOST_ACCESS_RANDOM                 = 11,
+	// Together with `.HOST_ACCESS_SEQUENTIAL_WRITE` or `.HOST_ACCESS_RANDOM`, it
+	// says that despite request for host access, a not-`HOST_VISIBLE` memory
+	// type can be selected if it may improve performance.
+	//
+	// By using this flag, you declare that you will check if the allocation
+	// ended up in a `HOST_VISIBLE` memory type (e.g. using
+	// `vma.GetAllocationMemoryProperties()`) and if not, you will create some
+	// "staging" buffer and issue an explicit transfer to write/read your data.
+	// To prepare for this possibility, don't forget to add appropriate flags
+	// like `vk.BufferUsageFlags.TRANSFER_DST`, `vk.BufferUsageFlags.TRANSFER_SRC` to
+	// the parameters of created buffer or image.
+	HOST_ACCESS_ALLOW_TRANSFER_INSTEAD = 12,
+	// Allocation strategy that chooses smallest possible free range for the
+	// allocation to minimize memory usage and fragmentation, possibly at the
+	// expense of allocation time.
+	STRATEGY_MIN_MEMORY                = 16,
+	// Allocation strategy that chooses first suitable free range for the
+	// allocation - not necessarily in terms of the smallest offset but the one
+	// that is easiest and fastest to find to minimize allocation time, possibly
+	// at the expense of allocation quality.
+	STRATEGY_MIN_TIME                  = 17,
+	// Allocation strategy that chooses always the lowest offset in available space.
+	// This is not the most efficient strategy but achieves highly packed data.
+	// Used internally by defragmentation, not recommended in typical usage.
+	STRATEGY_MIN_OFFSET                = 18,
 }
 
-ALLOCATION_CREATE_STRATEGY_BEST_FIT :: Allocation_Create_Flags{.Strategy_Min_Memory}
-ALLOCATION_CREATE_STRATEGY_FIRST_FIT :: Allocation_Create_Flags{.Strategy_Min_Time}
-ALLOCATION_CREATE_STRATEGY_MASK :: Allocation_Create_Flags {
-	.Strategy_Min_Memory,
-	.Strategy_Min_Time,
-	.Strategy_Min_Offset,
+// Alias to `STRATEGY_MIN_MEMORY`.
+ALLOCATION_CREATE_FLAGS_STRATEGY_BEST_FIT :: AllocationCreateFlags{.STRATEGY_MIN_MEMORY}
+
+// Alias to `STRATEGY_MIN_TIME`.
+ALLOCATION_CREATE_FLAGS_STRATEGY_FIRST_FIT :: AllocationCreateFlags{.STRATEGY_MIN_TIME}
+
+// A bit mask to extract only `STRATEGY` bits from entire set of flags.
+ALLOCATION_CREATE_FLAGS_STRATEGY_MASK :: AllocationCreateFlags {
+	.STRATEGY_MIN_MEMORY,
+	.STRATEGY_MIN_TIME,
+	.STRATEGY_MIN_OFFSET,
 }
 
-// Flags to be passed as VmaPoolCreateInfo::flags.
-Pool_Create_Flags :: bit_set[Pool_Create_Flag;u32]
-Pool_Create_Flag :: enum u32 {
-	Ignore_Buffer_Image_Granularity = 1,
-	Linear_Algorithm                = 2,
+// Flags to be passed as `vma.PoolCreateInfo.flags`.
+PoolCreateFlags :: bit_set[PoolCreateFlag; vk.Flags]
+PoolCreateFlag :: enum i32 {
+	// Use this flag if you always allocate only buffers and linear images or
+	// only optimal images out of this pool and so Buffer-Image Granularity can
+	// be ignored.
+	//
+	// This is an optional optimization flag.
+	//
+	// If you always allocate using `vma.CreateBuffer()`, `vma.CreateImage()`,
+	// `vma.AllocateMemoryForBuffer()`, then you don't need to use it because
+	// allocator knows exact type of your allocations so it can handle
+	// Buffer-Image Granularity in the optimal way.
+	//
+	// If you also allocate using `vma.AllocateMemoryForImage()` or
+	// `vma.AllocateMemory()`, exact type of such allocations is not known, so
+	// allocator must be conservative in handling Buffer-Image Granularity,
+	// which can lead to suboptimal allocation (wasted memory). In that case, if
+	// you can make sure you always allocate only buffers and linear images or
+	// only optimal images out of this pool, use this flag to make allocator
+	// disregard Buffer-Image Granularity and so make allocations faster and
+	// more optimal.
+	IGNORE_BUFFER_IMAGE_GRANULARITY = 1,
+
+	// Enables alternative, linear allocation algorithm in this pool.
+	//
+	// Specify this flag to enable linear allocation algorithm, which always
+	// creates new allocations after last one and doesn't reuse space from
+	// allocations freed in between. It trades memory consumption for simplified
+	// algorithm and data structure, which has better performance and uses less
+	// memory for metadata.
+	//
+	// By using this flag, you can achieve behavior of free-at-once, stack, ring
+	// buffer, and double stack.
+	LINEAR_ALGORITHM                = 2,
 }
 
-POOL_CREATE_ALGORITHM_MASK :: Pool_Create_Flags{.Linear_Algorithm}
+// Bit mask to extract only `ALGORITHM` bits from entire set of flags.
+POOL_CREATE_FLAGS_ALGORITHM_MASK :: PoolCreateFlags{.LINEAR_ALGORITHM}
 
-// Flags to be passed as VmaDefragmentationInfo::flags.
-Defragmentation_Flags :: bit_set[Defragmentation_Flag;u32]
-Defragmentation_Flag :: enum u32 {
-	Algorithm_Fast,
-	Algorithm_Balanced,
-	Algorithm_Full,
-	Algorithm_Extensive,
+// Flags to be passed as DefragmentationInfo::flags.
+DefragmentationFlags :: bit_set[DefragmentationFlag; vk.Flags]
+DefragmentationFlag :: enum i32 {
+	// Use simple but fast algorithm for defragmentation.
+	//
+	// May not achieve best results but will require least time to compute and
+	// least allocations to copy.
+	ALGORITHM_FAST,
+	// Default defragmentation algorithm, applied also when no `ALGORITHM` flag
+	// is specified.
+	//
+	// Offers a balance between defragmentation quality and the amount of
+	// allocations and bytes that need to be moved.
+	ALGORITHM_BALANCED,
+	// Perform full defragmentation of memory.
+	//
+	// Can result in notably more time to compute and allocations to copy, but
+	// will achieve best memory packing.
+	ALGORITHM_FULL,
+	// Use the most roboust algorithm at the cost of time to compute and number
+	// of copies to make.
+	//
+	// Only available when bufferImageGranularity is greater than 1, since it
+	// aims to reduce alignment issues between different types of resources.
+	//
+	// Otherwise falls back to same behavior as `ALGORITHM_FULL`.
+	ALGORITHM_EXTENSIVE,
 }
 
 // A bit mask to extract only `ALGORITHM` bits from entire set of flags.
-DEFRAGMENTATION_ALGORITHM_MASK :: Defragmentation_Flags {
-	.Algorithm_Fast,
-	.Algorithm_Balanced,
-	.Algorithm_Full,
-	.Algorithm_Extensive,
-}
+DEFRAGMENTATION_FLAGS_ALGORITHM_MASK :: DefragmentationFlags{
+	.ALGORITHM_FAST,
+	.ALGORITHM_BALANCED,
+	.ALGORITHM_FULL,
+	.ALGORITHM_EXTENSIVE}
 
-// Operation performed on single defragmentation move. See structure
-// #VmaDefragmentationMove.
-Defragmentation_Move_Operation :: enum u32 {
+// Operation performed on single defragmentation move. See structure #DefragmentationMove.
+DefragmentationMoveOperation :: enum {
 	// Buffer/image has been recreated at `dstTmpAllocation`, data has been
 	// copied, old buffer/image has been destroyed. `srcAllocation` should be
 	// changed to point to the new place. This is the default value set by
-	// vm.begin_defragmentation_pass().
-	Operation_Copy,
-
+	// `vma.BeginDefragmentationPass()`.
+	COPY,
 	// Set this value if you cannot move the allocation. New place reserved at
 	// `dstTmpAllocation` will be freed. `srcAllocation` will remain unchanged.
-	Operation_Ignore,
-
+	IGNORE,
 	// Set this value if you decide to abandon the allocation and you destroyed
 	// the buffer/image. New place reserved at `dstTmpAllocation` will be freed,
 	// along with `srcAllocation`, which will be destroyed.
-	Operation_Destroy,
+	DESTROY,
 }
 
-// Flags to be passed as `Virtual_Block_Create_Info.flags`.
-Virtual_Block_Create_Flags :: bit_set[Virtual_Block_Create_Flag;u32]
-Virtual_Block_Create_Flag :: enum u32 {
-	Linear_Algorithm,
+// Flags to be passed as `vma.VirtualBlockCreateInfo.flags`.
+VirtualBlockCreateFlags :: bit_set[VirtualBlockCreateFlag; vk.Flags]
+VirtualBlockCreateFlag :: enum i32 {
+	// Enables alternative, linear allocation algorithm in this virtual block.
+	//
+	// Specify this flag to enable linear allocation algorithm, which always creates
+	// new allocations after last one and doesn't reuse space from allocations freed in
+	// between. It trades memory consumption for simplified algorithm and data
+	// structure, which has better performance and uses less memory for metadata.
+	//
+	// By using this flag, you can achieve behavior of free-at-once, stack,
+	// ring buffer, and double stack.
+	//
+	// For details, see documentation chapter linear algorithm.
+	LINEAR_ALGORITHM,
 }
 
-VIRTUAL_BLOCK_CREATE_ALGORITHM_MASK :: Virtual_Block_Create_Flags{.Linear_Algorithm}
-
-// Flags to be passed as Virtual_Allocation_Create_Info.flags.
-Virtual_Allocation_Create_Flags :: bit_set[Virtual_Allocation_Create_Flag;u32]
-Virtual_Allocation_Create_Flag :: enum u32 {
-	Upper_Address       = 7,
-	Strategy_Min_Memory = 16,
-	Strategy_Min_Time   = 17,
-	Strategy_Min_Offset = 18,
+// Bit mask to extract only `ALGORITHM` bits from entire set of flags.
+VIRTUAL_BLOCK_CREATE_FLAGS_ALGORITHM_MASK :: VirtualBlockCreateFlags{
+	.LINEAR_ALGORITHM,
 }
 
-VIRTUAL_ALLOCATION_CREATE_STRATEGY_MASK :: Virtual_Allocation_Create_Flags {
-	.Strategy_Min_Memory,
-	.Strategy_Min_Time,
-	.Strategy_Min_Offset,
+// Flags to be passed as `vma.VirtualAllocationCreateInfo.flags`.
+VirtualAllocationCreateFlags :: bit_set[VirtualAllocationCreateFlag; vk.Flags]
+VirtualAllocationCreateFlag :: enum i32 {
+	// Allocation will be created from upper stack in a double stack pool.
+	//
+	// This flag is only allowed for virtual blocks created with
+	// `vma.VirtualBlockCreateFlags.LINEAR_ALGORITHM` flag.
+	UPPER_ADDRESS       = 6,
+	// Allocation strategy that tries to minimize memory usage.
+	STRATEGY_MIN_MEMORY = 16,
+	// Allocation strategy that tries to minimize allocation time.
+	STRATEGY_MIN_TIME   = 17,
+	// Allocation strategy that chooses always the lowest offset in available space.
+	// This is not the most efficient strategy but achieves highly packed data.
+	STRATEGY_MIN_OFFSET = 18,
+}
+
+// A bit mask to extract only `STRATEGY` bits from entire set of flags.
+//
+// These strategy flags are binary compatible with equivalent flags in
+// `vma.AllocationCreateFlags`.
+VIRTUAL_ALLOCATION_CREATE_FLAGS_STRATEGY_MASK :: VirtualAllocationCreateFlags{
+	.STRATEGY_MIN_MEMORY,
+	.STRATEGY_MIN_TIME,
+	.STRATEGY_MIN_OFFSET,
 }
 
 // Represents main object of this library initialized.
 //
-// Fill structure `Allocator_Create_Info` and call procedure `create_allocator()` to create it.
-// Call procedure `destroy_allocator()` to destroy it.
+// Fill structure `vma.AllocatorCreateInfo` and call function
+// `vma.CreateAllocator()` to create it. Call function `vma.DestroyAllocator()`
+// to destroy it.
 //
-// It is recommended to create just one object of this type per `VkDevice` object, right after
-// Vulkan is initialized and keep it alive until before Vulkan device is destroyed.
-Allocator :: distinct rawptr
+// It is recommended to create just one object of this type per `vk.Device`
+// object, right after Vulkan is initialized and keep it alive until before
+// Vulkan device is destroyed.
+Allocator :: distinct vk.Handle
 
 // Represents custom memory pool
 //
-// Fill structure `Pool_Create_Info` and call procedure `create_pool()` to create it. Call
-// procedure `destroy_pool()` to destroy it.
-Pool :: distinct rawptr
+// Fill structure `vma.PoolCreateInfo` and call function `.CreatePool()` to
+// create it. Call function `vma.DestroyPool()` to destroy it.
+Pool :: distinct vk.Handle
 
 // Represents single memory allocation.
 //
-// It may be either dedicated block of `VkDeviceMemory` or a specific region of a bigger block
-// of this type plus unique offset.
+// It may be either dedicated block of `vk.DeviceMemory` or a specific region of
+// a bigger block of this type plus unique offset.
 //
 // There are multiple ways to create such object. You need to fill structure
-// VmaAllocationCreateInfo.
+// `vma.AllocationCreateInfo`.
 //
-// Although the library provides convenience procedures that create Vulkan buffer or image,
-// allocate memory for it and bind them together, binding of the allocation to a buffer or an
-// image is out of scope of the allocation itself. Allocation object can exist without
-// buffer/image bound, binding can be done manually by the user, and destruction of it can be
-// done independently of destruction of the allocation.
+// Although the library provides convenience functions that create Vulkan buffer
+// or image, allocate memory for it and bind them together, binding of the
+// allocation to a buffer or an image is out of scope of the allocation itself.
+// Allocation object can exist without buffer/image bound, binding can be done
+// manually by the user, and destruction of it can be done independently of
+// destruction of the allocation.
 //
-// The object also remembers its size and some other information. To retrieve this information,
-// use procedure vmaGetAllocationInfo() and inspect returned structure VmaAllocationInfo.
-Allocation :: distinct rawptr
+// The object also remembers its size and some other information. To retrieve
+// this information, use function `vma.GetAllocationInfo()` and inspect returned
+// structure AllocationInfo.
+Allocation :: distinct vk.Handle
 
 // An opaque object that represents started defragmentation process.
-Defragmentation_Context :: distinct rawptr
+//
+// Fill structure `vma.DefragmentationInfo` and call function
+// `vma.BeginDefragmentation()` to create it. Call function
+// `vma.EndDefragmentation()` to destroy it.
+DefragmentationContext :: distinct vk.Handle
 
-// Represents single memory allocation done inside VmaVirtualBlock.
-Virtual_Allocation :: vk.NonDispatchableHandle
+// Represents single memory allocation done inside `VirtualBlock`.
+//
+// Use it as a unique identifier to virtual allocation within the single block.
+//
+// Use value `{}` to represent a nil/invalid allocation.
+VirtualAllocation :: distinct vk.NonDispatchableHandle
 
-// Handle to a virtual block object that allows to use core allocation algorithm without
-// allocating any real GPU memory.
-Virtual_Block :: distinct rawptr
+// Handle to a virtual block object that allows to use core allocation algorithm
+// without allocating any real GPU memory.
+//
+// Fill in `vma.VirtualBlockCreateInfo` structure and use `vma.CreateVirtualBlock()`
+// to create it. Use `vma.DestroyVirtualBlock()` to destroy it.
+//
+// This object is not thread-safe - should not be used from multiple threads
+// simultaneously, must be synchronized externally.
+VirtualBlock :: distinct vk.Handle
 
-/* Callback procedure called after successful `vkAllocateMemory`. */
-Allocate_Device_Memory_Proc :: #type proc "c" (
+// Callback function called after successful vk.AllocateMemory.
+AllocateDeviceMemoryProc :: #type proc "c" (
 	allocator: Allocator,
-	memory_type: u32,
+	memoryType: u32,
 	memory: vk.DeviceMemory,
 	size: vk.DeviceSize,
-	user_data: rawptr,
-)
+	pUserData: rawptr)
 
-// Callback procedure called before vkFreeMemory.
-Free_Device_Memory_Proc :: #type proc "c" (
+// Callback function called before vk.FreeMemory.
+FreeDeviceMemoryProc :: #type proc "c" (
 	allocator: Allocator,
-	memory_type: u32,
+	memoryType: u32,
 	memory: vk.DeviceMemory,
 	size: vk.DeviceSize,
-	user_data: rawptr,
-)
+	pUserData: rawptr)
 
-// Set of callbacks that the library will call for `vkAllocateMemory` and `vkFreeMemory`.
-Device_Memory_Callbacks :: struct {
+// Set of callbacks that the library will call for `vk.AllocateMemory` and `vk.FreeMemory`.
+//
+// Provided for informative purpose, e.g. to gather statistics about number of
+// allocations or total amount of memory allocated in Vulkan.
+//
+// Used in `vma.AllocatorCreateInfo.pDeviceMemoryCallbacks`.
+DeviceMemoryCallbacks :: struct {
 	// Optional, can be nil.
-	allocate_proc: Allocate_Device_Memory_Proc,
+	pfnAllocate: AllocateDeviceMemoryProc,
 	// Optional, can be nil.
-	free_proc:     Free_Device_Memory_Proc,
+	pfnFree:     FreeDeviceMemoryProc,
 	// Optional, can be nil.
-	user_data:     rawptr,
+	pUserData:   rawptr,
 }
 
-// Pointers to some Vulkan procedures - a subset used by the library.
-Vulkan_Functions :: struct {
-	_unused_1:                                  proc(), // vk.ProcGetInstanceProcAddr
-	_unused_2:                                  proc(), // vk.ProcGetDeviceProcAddr
-	get_physical_device_properties:             vk.ProcGetPhysicalDeviceProperties,
-	get_physical_device_memory_properties:      vk.ProcGetPhysicalDeviceMemoryProperties,
-	allocate_memory:                            vk.ProcAllocateMemory,
-	free_memory:                                vk.ProcFreeMemory,
-	map_memory:                                 vk.ProcMapMemory,
-	unmap_memory:                               vk.ProcUnmapMemory,
-	flush_mapped_memory_ranges:                 vk.ProcFlushMappedMemoryRanges,
-	invalidate_mapped_memory_ranges:            vk.ProcInvalidateMappedMemoryRanges,
-	bind_buffer_memory:                         vk.ProcBindBufferMemory,
-	bind_image_memory:                          vk.ProcBindImageMemory,
-	get_buffer_memory_requirements:             vk.ProcGetBufferMemoryRequirements,
-	get_image_memory_requirements:              vk.ProcGetImageMemoryRequirements,
-	create_buffer:                              vk.ProcCreateBuffer,
-	destroy_buffer:                             vk.ProcDestroyBuffer,
-	create_image:                               vk.ProcCreateImage,
-	destroy_image:                              vk.ProcDestroyImage,
-	cmd_copy_buffer:                            vk.ProcCmdCopyBuffer,
-	get_buffer_memory_requirements2_khr:        vk.ProcGetBufferMemoryRequirements2KHR,
-	get_image_memory_requirements2_khr:         vk.ProcGetImageMemoryRequirements2KHR,
-	bind_buffer_memory2_khr:                    vk.ProcBindBufferMemory2KHR,
-	bind_image_memory2_khr:                     vk.ProcBindImageMemory2KHR,
-	get_physical_device_memory_properties2_khr: vk.ProcGetPhysicalDeviceMemoryProperties2KHR,
-	get_device_buffer_memory_requirements:      vk.ProcGetDeviceBufferMemoryRequirementsKHR,
-	get_device_image_memory_requirements:       vk.ProcGetDeviceImageMemoryRequirementsKHR,
-	get_memory_win32_handle_khr:                vk.ProcGetMemoryWin32HandleKHR,
+// Pointers to some Vulkan functions - a subset used by the library.
+//
+// Used in AllocatorCreateInfo.pVulkanFunctions.
+VulkanFunctions :: struct {
+	// Required when using VMA_DYNAMIC_VULKAN_FUNCTIONS.
+	GetInstanceProcAddr:                   vk.ProcGetInstanceProcAddr,
+	// Required when using VMA_DYNAMIC_VULKAN_FUNCTIONS.
+	GetDeviceProcAddr:                     vk.ProcGetDeviceProcAddr,
+	GetPhysicalDeviceProperties:           vk.ProcGetPhysicalDeviceProperties,
+	GetPhysicalDeviceMemoryProperties:     vk.ProcGetPhysicalDeviceMemoryProperties,
+	AllocateMemory:                        vk.ProcAllocateMemory,
+	FreeMemory:                            vk.ProcFreeMemory,
+	MapMemory:                             vk.ProcMapMemory,
+	UnmapMemory:                           vk.ProcUnmapMemory,
+	FlushMappedMemoryRanges:               vk.ProcFlushMappedMemoryRanges,
+	InvalidateMappedMemoryRanges:          vk.ProcInvalidateMappedMemoryRanges,
+	BindBufferMemory:                      vk.ProcBindBufferMemory,
+	BindImageMemory:                       vk.ProcBindImageMemory,
+	GetBufferMemoryRequirements:           vk.ProcGetBufferMemoryRequirements,
+	GetImageMemoryRequirements:            vk.ProcGetImageMemoryRequirements,
+	CreateBuffer:                          vk.ProcCreateBuffer,
+	DestroyBuffer:                         vk.ProcDestroyBuffer,
+	CreateImage:                           vk.ProcCreateImage,
+	DestroyImage:                          vk.ProcDestroyImage,
+	CmdCopyBuffer:                         vk.ProcCmdCopyBuffer,
+	// Fetch `vk.GetBufferMemoryRequirements2` on Vulkan >= 1.1, fetch
+	// `vk.GetBufferMemoryRequirements2KHR` when using
+	// `VK_KHR_dedicated_allocation` extension.
+	GetBufferMemoryRequirements2KHR:       vk.ProcGetBufferMemoryRequirements2KHR,
+	// Fetch `vk.GetImageMemoryRequirements2` on Vulkan >= 1.1, fetch
+	// `vk.GetImageMemoryRequirements2KHR` when using
+	// `VK_KHR_dedicated_allocation` extension.
+	GetImageMemoryRequirements2KHR:        vk.ProcGetImageMemoryRequirements2KHR,
+	// Fetch `vk.BindBufferMemory2` on Vulkan >= 1.1, fetch
+	// `vk.BindBufferMemory2KHR` when using `VK_KHR_bind_memory2` extension.
+	BindBufferMemory2KHR:                  vk.ProcBindBufferMemory2KHR,
+	// Fetch `vk.BindImageMemory2` on Vulkan >= 1.1, fetch
+	// `vk.BindImageMemory2KHR` when using `VK_KHR_bind_memory2` extension.
+	BindImageMemory2KHR:                   vk.ProcBindImageMemory2KHR,
+	// Fetch from `vk.GetPhysicalDeviceMemoryProperties2` on Vulkan >= 1.1, but
+	// you can also fetch it from `vk.GetPhysicalDeviceMemoryProperties2KHR` if
+	// you enabled extension `VK_KHR_get_physical_device_properties2`.
+	GetPhysicalDeviceMemoryProperties2KHR: vk.ProcGetPhysicalDeviceMemoryProperties2KHR,
+	// Fetch from `vk.GetDeviceBufferMemoryRequirements` on Vulkan >= 1.3, but
+	// you can also fetch it from `vk.GetDeviceBufferMemoryRequirementsKHR` if
+	// you enabled extension `VK_KHR_maintenance4`.
+	GetDeviceBufferMemoryRequirements:     vk.ProcGetDeviceBufferMemoryRequirementsKHR,
+	// Fetch from `vk.GetDeviceImageMemoryRequirements` on Vulkan >= 1.3, but
+	// you can also fetch it from `vk.GetDeviceImageMemoryRequirementsKHR` if
+	// you enabled extension `VK_KHR_maintenance4`.
+	GetDeviceImageMemoryRequirements:      vk.ProcGetDeviceImageMemoryRequirementsKHR,
+	GetMemoryWin32HandleKHR:               vk.ProcGetMemoryWin32HandleKHR,
+	// Fetch from `vk.GetPhysicalDeviceProperties2` on Vulkan >= 1.1, but you
+	// can also fetch it from `vk.GetPhysicalDeviceProperties2KHR` if you
+	// enabled extension `VK_KHR_get_physical_device_properties2`.
+	GetPhysicalDeviceProperties2KHR:       vk.ProcGetPhysicalDeviceProperties2KHR,
 }
 
 // Description of a Allocator to be created.
-Allocator_Create_Info :: struct {
-	// Flags for created allocator.
-	flags:                             Allocator_Create_Flags,
+AllocatorCreateInfo :: struct {
+	// Flags for created allocator. Use `vma.AllocatorCreateFlags`.
+	flags:                          AllocatorCreateFlags,
 	// Vulkan physical device.
-	physical_device:                   vk.PhysicalDevice,
+	//
+	// It must be valid throughout whole lifetime of created allocator.
+	physicalDevice:                 vk.PhysicalDevice,
 	// Vulkan device.
-	device:                            vk.Device,
+	//
+	// It must be valid throughout whole lifetime of created allocator.
+	device:                         vk.Device,
 	// Preferred size of a single `vk.DeviceMemory` block to be allocated from
-	// large heaps > 1 GiB. Optional.
-	preferred_large_heap_block_size:   vk.DeviceSize,
-	// Custom CPU memory allocation callbacks. Optional.
-	allocation_callbacks:              ^vk.AllocationCallbacks,
-	// Informative callbacks for `vkAllocateMemory`, `vkFreeMemory`. Optional.
-	device_memory_callbacks:           ^Device_Memory_Callbacks,
-	heap_size_limit:                   [^]vk.DeviceSize,
-	vulkan_functions:                  ^Vulkan_Functions,
-	instance:                          vk.Instance,
-	vulkan_api_version:                u32,
-	type_external_memory_handle_types: ^vk.ExternalMemoryHandleTypeFlagsKHR,
+	// large heaps > 1 GiB. Optional. Set to 0 to use default, which is
+	// currently 256 MiB.
+	preferredLargeHeapBlockSize:    vk.DeviceSize,
+	// Custom CPU memory allocation callbacks. Optional, can be nil.
+	// When specified, will also be used for all CPU-side memory allocations.
+	pAllocationCallbacks:           ^vk.AllocationCallbacks,
+	// Informative callbacks for `vk.AllocateMemory`, `vk.FreeMemory`. Optional,
+	// can be nil.
+	pDeviceMemoryCallbacks:         ^DeviceMemoryCallbacks,
+	// Either nil or a pointer to an array of limits on maximum number of bytes
+	// that can be allocated out of particular Vulkan memory heap.
+	//
+	// If not nil, it must be a pointer to an array of
+	// `vk.PhysicalDeviceMemoryProperties.memoryHeapCount` elements, defining
+	// limit on maximum number of bytes that can be allocated out of particular
+	// Vulkan memory heap.
+	//
+	// Any of the elements may be equal to `vk.WHOLE_SIZE`, which means no limit
+	// on that heap. This is also the default in case of `pHeapSizeLimit` = nil.
+	//
+	// If there is a limit defined for a heap:
+	//
+	// - If user tries to allocate more memory from that heap using this
+	//   allocator, the allocation fails with `vk.Result.ERROR_OUT_OF_DEVICE_MEMORY`.
+	// - If the limit is smaller than heap size reported in
+	//   `vk.MemoryHeap.size`, the value of this limit will be reported instead
+	//   when using `vma.GetMemoryProperties()`.
+	//
+	// Warning! Using this feature may not be equivalent to installing a GPU
+	// with smaller amount of memory, because graphics driver doesn't necessary
+	// fail new allocations with `vk.Result.ERROR_OUT_OF_DEVICE_MEMORY` result when
+	// memory capacity is exceeded. It may return success and just silently
+	// migrate some device memory blocks to system RAM. This driver behavior can
+	// also be controlled using `VK_AMD_memory_overallocation_behavior` extension.
+	pHeapSizeLimit:                 ^vk.DeviceSize,
+	// Pointers to Vulkan functions. Can be nil.
+	pVulkanFunctions:               ^VulkanFunctions,
+	// Handle to Vulkan instance object.
+	//
+	// Starting from version 3.0.0 this member is no longer optional, it must be set!
+	instance:                       vk.Instance,
+	// Optional. Vulkan version that the application uses.
+	//
+	// It must be a value in the format as created by macro `vk.MAKE_VERSION` or
+	// a constant like: `vk.API_VERSION_1_1`, `vk.API_VERSION_1_0`. The patch
+	// version number specified is ignored. Only the major and minor versions
+	// are considered. Only versions 1.0...1.4 are supported by the current
+	// implementation. Leaving it initialized to zero is equivalent to
+	// `vk.API_VERSION_1_0`. It must match the Vulkan version used by the
+	// application and supported on the selected physical device, so it must be
+	// no higher than `vk.ApplicationInfo.apiVersion` passed to
+	// `vk.CreateInstance` and no higher than
+	// `vk.PhysicalDeviceProperties.apiVersion` found on the physical device used.
+	vulkanApiVersion:               u32,
+	// Either nil or a pointer to an array of external memory handle types for
+	// each Vulkan memory type.
+	//
+	// If not nil, it must be a pointer to an array of
+	// `vk.PhysicalDeviceMemoryProperties.memoryTypeCount` elements, defining
+	// external memory handle types of particular Vulkan memory type, to be
+	// passed using `vk.ExportMemoryAllocateInfoKHR`.
+	//
+	// Any of the elements may be equal to 0, which means not to use
+	// `vk.ExportMemoryAllocateInfoKHR` on this memory type. This is also the
+	// default in case of `pTypeExternalMemoryHandleTypes` = nil.
+	pTypeExternalMemoryHandleTypes: ^vk.ExternalMemoryHandleTypeFlagsKHR,
 }
 
 // Information about existing `Allocator` object.
-Allocator_Info :: struct {
-	instance:        vk.Instance,
-	physical_device: vk.PhysicalDevice,
-	device:          vk.Device,
+AllocatorInfo :: struct {
+	// Handle to Vulkan instance object.
+	//
+	// This is the same value as has been passed through
+	// `vma.AllocatorCreateInfo.instance`.
+	instance:       vk.Instance,
+	// Handle to Vulkan physical device object.
+	//
+	// This is the same value as has been passed through
+	// `vma.AllocatorCreateInfo.physicalDevice`.
+	physicalDevice: vk.PhysicalDevice,
+	// Handle to Vulkan device object.
+	//
+	// This is the same value as has been passed through
+	// `vma.AllocatorCreateInfo.device`.
+	device:         vk.Device,
 }
 
-// Calculated statistics of memory usage e.g. in a specific memory type, heap, custom pool, or
-// total.
+// Calculated statistics of memory usage e.g. in a specific memory type, heap,
+// custom pool, or total.
+//
+// These are fast to calculate. See functions: `vma.GetHeapBudgets()`,
+// `vma.GetPoolStatistics()`.
 Statistics :: struct {
-	block_count:      u32,
-	allocation_count: u32,
-	block_bytes:      vk.DeviceSize,
-	allocation_bytes: vk.DeviceSize,
+	// Number of `vk.DeviceMemory` objects - Vulkan memory blocks allocated.
+	blockCount:      u32,
+	// Number of `Allocation` objects allocated.
+	//
+	// Dedicated allocations have their own blocks, so each one adds 1 to
+	// `allocationCount` as well as `blockCount`.
+	allocationCount: u32,
+	// Number of bytes allocated in `vk.DeviceMemory` blocks.
+	//
+	// NOTE: To avoid confusion, please be aware that what Vulkan calls an
+	// "allocation" - a whole `vk.DeviceMemory` object (e.g. as in
+	// `vk.PhysicalDeviceLimits.maxMemoryAllocationCount`) is called a "block"
+	// in VMA, while VMA calls "allocation" a `Allocation` object that represents
+	// a memory region sub-allocated from such block, usually for a single
+	// buffer or image.
+	blockBytes:      vk.DeviceSize,
+	// Total number of bytes occupied by all `Allocation` objects.
+	//
+	// Always less or equal than `blockBytes`. Difference `(blockBytes -
+	// allocationBytes)` is the amount of memory allocated from Vulkan but
+	// unused by any `Allocation`.
+	allocationBytes: vk.DeviceSize,
 }
 
-// More detailed statistics than #VmaStatistics.
-Detailed_Statistics :: struct {
+// More detailed statistics than #Statistics.
+//
+// These are slower to calculate. Use for debugging purposes.
+// See functions: `vma.CalculateStatistics()`, `vma.CalculatePoolStatistics()`.
+//
+// Previous version of the statistics API provided averages, but they have been removed
+// because they can be easily calculated as:
+//
+//    allocation_size_avg := detailed_stats.statistics.allocationBytes / detailed_stats.statistics.allocationCount
+//    unused_bytes := detailed_stats.statistics.blockBytes - detailed_stats.statistics.allocationBytes
+//    unused_range_size_avg := unused_bytes / detailed_stats.unusedRangeCount
+DetailedStatistics :: struct {
 	// Basic statistics.
-	statistics:            Statistics,
+	statistics:         Statistics,
 	// Number of free ranges of memory between allocations.
-	unused_range_count:    u32,
+	unusedRangeCount:   u32,
 	// Smallest allocation size. `vk.WHOLE_SIZE` if there are 0 allocations.
-	allocation_size_min:   vk.DeviceSize,
+	allocationSizeMin:  vk.DeviceSize,
 	// Largest allocation size. 0 if there are 0 allocations.
-	allocation_size_max:   vk.DeviceSize,
+	allocationSizeMax:  vk.DeviceSize,
 	// Smallest empty range size. `vk.WHOLE_SIZE` if there are 0 empty ranges.
-	unused_range_size_min: vk.DeviceSize,
+	unusedRangeSizeMin: vk.DeviceSize,
 	// Largest empty range size. 0 if there are 0 empty ranges.
-	unused_range_size_max: vk.DeviceSize,
+	unusedRangeSizeMax: vk.DeviceSize,
 }
 
-// General statistics from current state of the Allocator - total memory usage across all
-// memory heaps and types.
-Total_Statistics :: struct {
-	memory_type: [vk.MAX_MEMORY_TYPES]Detailed_Statistics,
-	memory_heap: [vk.MAX_MEMORY_HEAPS]Detailed_Statistics,
-	total:       Detailed_Statistics,
+// General statistics from current state of the Allocator -
+// total memory usage across all memory heaps and types.
+//
+// These are slower to calculate. Use for debugging purposes.
+// See function vmaCalculateStatistics().
+TotalStatistics :: struct {
+	memoryType: [vk.MAX_MEMORY_TYPES]DetailedStatistics,
+	memoryHeap: [vk.MAX_MEMORY_HEAPS]DetailedStatistics,
+	total:      DetailedStatistics,
 }
 
 // Statistics of current memory usage and available budget for a specific memory heap.
+//
+// These are fast to calculate.
+//
+// See function `vma.GetHeapBudgets()`.
 Budget :: struct {
+	// Statistics fetched from the library.
 	statistics: Statistics,
+	// Estimated current memory usage of the program, in bytes.
+	//
+	// Fetched from system using `VK_EXT_memory_budget` extension if enabled.
+	//
+	// It might be different than `statistics.blockBytes` (usually higher) due
+	// to additional implicit objects also occupying the memory, like swapchain,
+	// pipelines, descriptor heaps, command buffers, or `vk.DeviceMemory` blocks
+	// allocated outside of this library, if any.
 	usage:      vk.DeviceSize,
+	// Estimated amount of memory available to the program, in bytes.
+	//
+	// Fetched from system using `VK_EXT_memory_budget` extension if enabled.
+	//
+	// It might be different (most probably smaller) than
+	// `vk.MemoryHeap.size[heapIndex]` due to factors external to the program,
+	// decided by the operating system. Difference `budget - usage` is the
+	// amount of additional memory that can probably be allocated without
+	// problems. Exceeding the budget may result in various problems.
 	budget:     vk.DeviceSize,
 }
 
 // Parameters of new `Allocation`.
-Allocation_Create_Info :: struct {
-	flags:            Allocation_Create_Flags,
-	usage:            Memory_Usage,
-	required_flags:   vk.MemoryPropertyFlags,
-	preferred_flags:  vk.MemoryPropertyFlags,
-	memory_type_bits: u32,
-	pool:             Pool,
-	user_data:        rawptr,
-	priority:         f32,
+//
+// To be used with functions like `vma.CreateBuffer()`, `vma.CreateImage()`, and
+// many others.
+AllocationCreateInfo :: struct {
+	// Use `vma.AllocationCreateFlags`.
+	flags:          AllocationCreateFlags,
+	// Intended usage of memory.
+	//
+	// You can leave `vma.MemoryUsage.UNKNOWN` if you specify memory
+	// requirements in other way.
+	//
+	// If `pool` is not nil, this member is ignored.
+	usage:          MemoryUsage,
+	// Flags that must be set in a Memory Type chosen for an allocation.
+	//
+	// Leave 0 if you specify memory requirements in other way.
+	// \n If `pool` is not nil, this member is ignored.
+	requiredFlags:  vk.MemoryPropertyFlags,
+	// Flags that preferably should be set in a memory type chosen for an allocation.
+	//
+	// Set to 0 if no additional flags are preferred.
+	//
+	// If `pool` is not nil, this member is ignored.
+	preferredFlags: vk.MemoryPropertyFlags,
+	// Bitmask containing one bit set for every memory type acceptable for this allocation.
+	//
+	// Value 0 is equivalent to `max(u32)` - it means any memory type is
+	// accepted if it meets other requirements specified by this structure, with
+	// no further restrictions on memory type index.
+	//
+	// If `pool` is not nil, this member is ignored.
+	memoryTypeBits: u32,
+	// Pool that this allocation should be created in.
+	//
+	// Leave `{}` to allocate from default pool. If not nil, members: `usage`,
+	// `requiredFlags`, `preferredFlags`, `memoryTypeBits` are ignored.
+	pool:           Pool,
+	// Custom general-purpose pointer that will be stored in `Allocation`, can
+	// be read as `vma.AllocationInfo.pUserData` and changed using
+	// `vma.SetAllocationUserData()`.
+	//
+	// If `vma.AllocationCreateFlags.USER_DATA_COPY_STRING` is used, it must be
+	// either nil or pointer to a nil-terminated string. The string will be then
+	// copied to internal buffer, so it doesn't need to be valid after
+	// allocation call.
+	pUserData:      rawptr,
+	// A floating-point value between 0 and 1, indicating the priority of the
+	// allocation relative to other memory allocations.
+	//
+	// It is used only when `vma.AllocatorCreateFlags.EXT_MEMORY_PRIORITY` flag
+	// was used during creation of the `Allocator` object and this allocation
+	// ends up as dedicated or is explicitly forced as dedicated using
+	// `vma.AllocationCreateFlags.DEDICATED_MEMORY`. Otherwise, it has the
+	// priority of a memory block where it is placed and this variable is ignored.
+	priority:       f32,
+	// Additional minimum alignment to be used for this allocation. Can be 0.
+	//
+	// Leave 0 (default) not to impose any additional alignment. If not 0, it
+	// must be a power of two.
+	//
+	// When creating a buffer or an image, specifying a custom alignment is not
+	// needed in most cases, because Vulkan implementation inspects the
+	// `CreateInfo` structure (including intended usage flags) and returns
+	// required alignment through functions like
+	// `vk.GetBufferMemoryRequirements2`, which VMA automatically uses and
+	// respects. Extra alignment may be needed in some cases, like when using a
+	// buffer for acceleration structure scratch
+	// (`vk.PhysicalDeviceAccelerationStructurePropertiesKHR.
+	// minAccelerationStructureScratchOffsetAlignment`,
+	// see also issue #523) or when doing interop with OpenGL.
+	minAlignment: vk.DeviceSize,
 }
 
-// Describes parameter of created #VmaPool.
-Pool_Create_Info :: struct {
-	memory_type_index:        u32,
-	flags:                    Pool_Create_Flags,
-	block_size:               vk.DeviceSize,
-	min_block_count:          uint,
-	max_block_count:          uint,
-	priority:                 f32,
-	min_allocation_alignment: vk.DeviceSize,
-	memory_allocate_next:     rawptr,
+// Describes parameter of created #Pool.
+PoolCreateInfo :: struct {
+	// Vulkan memory type index to allocate this pool from.
+	memoryTypeIndex:        u32,
+	// Use combination of `PoolCreateFlags`.
+	flags:                  PoolCreateFlags,
+	// Size of a single `vk.DeviceMemory` block to be allocated as part of this
+	// pool, in bytes. Optional.
+	//
+	// Specify nonzero to set explicit, constant size of memory blocks used by
+	// this pool.
+	//
+	// Leave 0 to use default and let the library manage block sizes
+	// automatically. Sizes of particular blocks may vary. In this case, the
+	// pool will also support dedicated allocations.
+	blockSize:              vk.DeviceSize,
+	// Minimum number of blocks to be always allocated in this pool, even if they stay empty.
+	//
+	// Set to 0 to have no preallocated blocks and allow the pool be completely empty.
+	minBlockCount:          uint,
+	// Maximum number of blocks that can be allocated in this pool. Optional.
+	//
+	// Set to 0 to use default, which is `max(uint)`, which means no limit.
+	//
+	// Set to same value as `vma.PoolCreateInfo.minBlockCount` to have fixed amount
+	// of memory allocated throughout whole lifetime of this pool.
+	maxBlockCount:          uint,
+	// A floating-point value between 0 and 1, indicating the priority of the
+	// allocations in this pool relative to other memory allocations.
+	//
+	// It is used only when `vma.AllocatorCreateFlags.EXT_MEMORY_PRIORITY` flag
+	// was used during creation of the `Allocator` object. Otherwise, this
+	// variable is ignored.
+	priority:               f32,
+	// Additional minimum alignment to be used for all allocations created from
+	// this pool. Can be 0.
+	//
+	// Leave 0 (default) not to impose any additional alignment. If not 0, it
+	// must be a power of two.
+	//
+	// When creating a buffer or an image, specifying a custom alignment is not
+	// needed in most cases, because Vulkan implementation inspects the
+	// `CreateInfo` structure (including intended usage flags) and returns
+	// required alignment through functions like
+	// `vk.GetBufferMemoryRequirements2`, which VMA automatically uses and
+	// respects. Extra alignment may be needed in some cases, like when using a
+	// buffer for acceleration structure scratch
+	// (`vk.PhysicalDeviceAccelerationStructurePropertiesKHR.
+	// minAccelerationStructureScratchOffsetAlignment`,
+	// see also issue #523) or when doing interop with OpenGL.
+	minAllocationAlignment: vk.DeviceSize,
+	// Additional `pNext` chain to be attached to `vk.MemoryAllocateInfo` used
+	// for every allocation made by this pool. Optional.
+	//
+	// Optional, can be nil. If not nil, it must point to a `pNext` chain of
+	// structures that can be attached to `vk.MemoryAllocateInfo`. It can be
+	// useful for special needs such as adding `VkExportMemoryAllocateInfoKHR`.
+	// Structures pointed by this member must remain alive and unchanged for the
+	// whole lifetime of the custom pool.
+	//
+	// Please note that some structures, e.g. `vk.MemoryPriorityAllocateInfoEXT`,
+	// `vk.MemoryDedicatedAllocateInfoKHR`, can be attached automatically by this
+	// library when using other, more convenient of its features.
+	pMemoryAllocateNext:    rawptr,
 }
 
-// Parameters of `Allocation` objects, that can be retrieved using procedure
-// `get_allocation_info()`.
-Allocation_Info :: struct {
-	memory_type:   u32,
-	device_memory: vk.DeviceMemory,
-	offset:        vk.DeviceSize,
-	size:          vk.DeviceSize,
-	mapped_data:   rawptr,
-	user_data:     rawptr,
-	name:          cstring,
+// Parameters of `Allocation` objects, that can be retrieved using function
+// `vma.GetAllocationInfo()`.
+//
+// There is also an extended version of this structure that carries additional
+// parameters: `vma.AllocationInfo2`.
+AllocationInfo :: struct {
+	// Memory type index that this allocation was allocated from.
+	//
+	// It never changes.
+	memoryType:   u32,
+	// Handle to Vulkan memory object.
+	//
+	// Same memory object can be shared by multiple allocations.
+	//
+	// It can change after the allocation is moved during defragmentation.
+	deviceMemory: vk.DeviceMemory,
+	// Offset in `vk.DeviceMemory` object to the beginning of this allocation,
+	// in bytes. `(deviceMemory, offset)` pair is unique to this allocation.
+	//
+	// You usually don't need to use this offset. If you create a buffer or an
+	// image together with the allocation using e.g. function `vma.CreateBuffer()`,
+	// `vma.CreateImage()`, functions that operate on these resources refer to the
+	// beginning of the buffer or image, not entire device memory block.
+	// Functions like `vma.MapMemory()`, `vma.BindBufferMemory()` also refer to the
+	// beginning of the allocation and apply this offset automatically.
+	//
+	// It can change after the allocation is moved during defragmentation.
+	offset:       vk.DeviceSize,
+	// Size of this allocation, in bytes.
+	//
+	// It never changes.
+	//
+	// NOTE - Allocation size returned in this variable may be greater than the size
+	// requested for the resource e.g. as `vk.BufferCreateInfo.size`. Whole size of the
+	// allocation is accessible for operations on memory e.g. using a pointer after
+	// mapping with `vma.MapMemory()`, but operations on the resource e.g. using
+	// `vk.CmdCopyBuffer` must be limited to the size of the resource.
+	size:         vk.DeviceSize,
+	// Pointer to the beginning of this allocation as mapped data.
+	//
+	// If the allocation hasn't been mapped using `vma.MapMemory()` and hasn't been
+	// created with `vma.AllocationCreateFlags.MAPPED` flag, this value is nil.
+	//
+	// It can change after call to `vma.MapMemory()`, `vma.UnmapMemory()`. It can also
+	// change after the allocation is moved during defragmentation.
+	pMappedData:  rawptr,
+	// Custom general-purpose pointer that was passed as
+	// `vma.AllocationCreateInfo.pUserData` or set using
+	// `vma.SetAllocationUserData()`.
+	//
+	// It can change after call to `vma.SetAllocationUserData()` for this allocation.
+	pUserData:    rawptr,
+	// Custom allocation name that was set with `vma.SetAllocationName()`.
+	//
+	// It can change after call to `vma.SetAllocationName()` for this allocation.
+	//
+	// Another way to set custom name is to pass it in
+	// `vma.AllocationCreateInfo.pUserData` with additional flag
+	// `vma.AllocationCreateFlags.USER_DATA_COPY_STRING` set [DEPRECATED].
+	pName:        cstring,
 }
 
-// Extended parameters of a #VmaAllocation object that can be retrieved using procedure
-// `get_allocation_info2()`.
-Allocation_Info2 :: struct {
-	allocation_info:  Allocation_Info,
-	block_size:       vk.DeviceSize,
-	dedicated_memory: b32,
+// Extended parameters of a `Allocation` object that can be retrieved using
+// function `vma.GetAllocationInfo2()`.
+AllocationInfo2 :: struct {
+	// Basic parameters of the allocation.
+	//
+	// If you need only these, you can use function vmaGetAllocationInfo() and
+	// structure `AllocationInfo` instead.
+	allocationInfo:  AllocationInfo,
+	// Size of the `vk.DeviceMemory` block that the allocation belongs to.
+	//
+	// In case of an allocation with dedicated memory, it will be equal to
+	// `allocationInfo.size`.
+	blockSize:       vk.DeviceSize,
+	// `true` if the allocation has dedicated memory, `false` if it was
+	// placed as part of a larger memory block.
+	//
+	// When `true`, it also means `vk.MemoryDedicatedAllocateInfo` was used when
+	// creating the allocation (if `VK_KHR_dedicated_allocation` extension or
+	// Vulkan version >= 1.1 is enabled).
+	dedicatedMemory: b32,
 }
 
-// Callback procedure called during `begin_defragmentation()` to check custom criterion about
-// ending current defragmentation pass.
-Check_Defragmentation_Break_Proc :: #type proc "c" (user_data: rawptr) -> b32
+// Callback function called during `vma.BeginDefragmentation()` to check custom
+// criterion about ending current defragmentation pass.
+//
+// Should return true if the defragmentation needs to stop current pass.
+CheckDefragmentationBreakProc :: #type proc "c" (pUserData: rawptr) -> b32
 
 // Parameters for defragmentation.
-Defragmentation_Info :: struct {
-	// Use combination of #VmaDefragmentationFlagBits.
-	flags:                    Defragmentation_Flags,
-	pool:                     Pool,
-	max_bytes_per_pass:       vk.DeviceSize,
-	max_allocations_per_pass: u32,
-	proc_break_callback:      Check_Defragmentation_Break_Proc,
+//
+// To be used with function `vma.BeginDefragmentation()`.
+DefragmentationInfo :: struct {
+	// Use combination of `vma.DefragmentationFlags`.
+	flags:                  DefragmentationFlags,
+	// Custom pool to be defragmented.
+	//
+	// If nil then default pools will undergo defragmentation process.
+	pool:                   Pool,
+	// Maximum numbers of bytes that can be copied during single pass, while
+	// moving allocations to different places.
+	//
+	// `0` means no limit.
+	maxBytesPerPass:        vk.DeviceSize,
+	// Maximum number of allocations that can be moved during single pass to a different place.
+	//
+	// `0` means no limit.
+	maxAllocationsPerPass:  u32,
+	// Optional custom callback for stopping `vma.BeginDefragmentation()`.
+	//
+	// Have to return true for breaking current defragmentation pass.
+	pfnBreakCallback:       CheckDefragmentationBreakProc,
 	// Optional data to pass to custom callback for stopping pass of defragmentation.
-	break_callback_user_data: rawptr,
+	pBreakCallbackUserData: rawptr,
 }
 
 // Single move of an allocation to be done for defragmentation.
-Defragmentation_Move :: struct {
-	// Operation to be performed on the allocation by vmaEndDefragmentationPass(). Default
-	// value is #VMA_DEFRAGMENTATION_MOVE_OPERATION_COPY. You can modify it.
-	operation:          Defragmentation_Move_Operation,
+DefragmentationMove :: struct {
+	// Operation to be performed on the allocation by
+	// `vma.EndDefragmentationPass()`. Default value is `.COPY`. You can modify it.
+	operation:        DefragmentationMoveOperation,
 	// Allocation that should be moved.
-	src_allocation:     Allocation,
-	dst_tmp_allocation: Allocation,
+	srcAllocation:    Allocation,
+	// Temporary allocation pointing to destination memory that will replace `srcAllocation`.
+	//
+	// Warning! Do not store this allocation in your data structures! It exists
+	// only temporarily, for the duration of the defragmentation pass, to be
+	// used for binding new buffer/image to the destination memory using e.g.
+	// `vma.BindBufferMemory()`. `vma.EndDefragmentationPass()` will destroy it and
+	// make `srcAllocation` point to this memory.
+	dstTmpAllocation: Allocation,
 }
 
-Defragmentation_Pass_Move_Info :: struct {
-	// Number of elements in the `moves` array.
-	move_count: u32,
-	moves:      [^]Defragmentation_Move,
-}
-
-// Statistics returned for defragmentation process in procedure `end_defragmentation()`.
-Defragmentation_Stats :: struct {
-	// Total number of bytes that have been copied while moving allocations to different
-	// places.
-	bytes_moved:                vk.DeviceSize,
-	// Total number of bytes that have been released to the system by freeing empty
-	// `vk.DeviceMemory` objects.
-	bytes_freed:                vk.DeviceSize,
-	// Number of allocations that have been moved to different places.
-	allocations_moved:          u32,
-	// Number of empty `vk.DeviceMemory` objects that have been released to the system.
-	device_memory_blocks_freed: u32,
-}
-
-// Parameters of created `Virtual_Block` object to be passed to `create_virtual_block()`.
-Virtual_Block_Create_Info :: struct {
-	size:                 vk.DeviceSize,
-	flags:                Virtual_Block_Create_Flags,
-	allocation_callbacks: ^vk.AllocationCallbacks,
-}
-
-// Parameters of created virtual allocation to be passed to `virtual_allocate()`.
-Virtual_Allocation_Create_Info :: struct {
-	size:      vk.DeviceSize,
-	alignment: vk.DeviceSize,
-	flags:     Virtual_Allocation_Create_Flags,
-	user_data: rawptr,
-}
-
-// Parameters of an existing virtual allocation, returned by `get_virtual_allocation_info()`.
-Virtual_Allocation_Info :: struct {
-	offset:    vk.DeviceSize,
-	size:      vk.DeviceSize,
-	user_data: rawptr,
-}
-
-// Bind vulkan procedures to vma.
-create_vulkan_functions :: proc() -> (procedures: Vulkan_Functions) {
-	procedures = Vulkan_Functions {
-		get_physical_device_properties             = vk.GetPhysicalDeviceProperties,
-		get_physical_device_memory_properties      = vk.GetPhysicalDeviceMemoryProperties,
-		allocate_memory                            = vk.AllocateMemory,
-		free_memory                                = vk.FreeMemory,
-		map_memory                                 = vk.MapMemory,
-		unmap_memory                               = vk.UnmapMemory,
-		flush_mapped_memory_ranges                 = vk.FlushMappedMemoryRanges,
-		invalidate_mapped_memory_ranges            = vk.InvalidateMappedMemoryRanges,
-		bind_buffer_memory                         = vk.BindBufferMemory,
-		bind_image_memory                          = vk.BindImageMemory,
-		get_buffer_memory_requirements             = vk.GetBufferMemoryRequirements,
-		get_image_memory_requirements              = vk.GetImageMemoryRequirements,
-		create_buffer                              = vk.CreateBuffer,
-		destroy_buffer                             = vk.DestroyBuffer,
-		create_image                               = vk.CreateImage,
-		destroy_image                              = vk.DestroyImage,
-		cmd_copy_buffer                            = vk.CmdCopyBuffer,
-		get_buffer_memory_requirements2_khr        = vk.GetBufferMemoryRequirements2KHR,
-		get_image_memory_requirements2_khr         = vk.GetImageMemoryRequirements2KHR,
-		bind_buffer_memory2_khr                    = vk.BindBufferMemory2KHR,
-		bind_image_memory2_khr                     = vk.BindImageMemory2KHR,
-		get_physical_device_memory_properties2_khr = vk.GetPhysicalDeviceMemoryProperties2KHR,
-		get_device_buffer_memory_requirements      = vk.GetDeviceBufferMemoryRequirements,
-		get_device_image_memory_requirements       = vk.GetDeviceImageMemoryRequirements,
-		get_memory_win32_handle_khr                = vk.GetMemoryWin32HandleKHR,
-	}
-
-	return
-}
-
-VK_VERSION_MAJOR :: proc(version: u32) -> u32 {
-	return (version >> 22) & 0x7F
-}
-
-VK_VERSION_MINOR :: proc(version: u32) -> u32 {
-	return (version >> 12) & 0x3FF
-}
-
-VK_VERSION_PATCH :: proc(version: u32) -> u32 {
-	return version & 0xFFF
-}
-
-// Convert between Vulkan's bit-packed version to decimal "MMmmppp" format.
+// Parameters for incremental defragmentation steps.
 //
-// `api_version` should be a value from the api or constructed with `vk.MAKE_VERSION`.
-VK_API_VERSION_TO_DECIMAL :: proc(api_version: u32) -> u32 {
-    major := VK_VERSION_MAJOR(api_version) * 1000000
-    minor := VK_VERSION_MINOR(api_version) * 1000
-    patch := VK_VERSION_PATCH(api_version)
-    return major + minor + patch
+// To be used with function `vma.BeginDefragmentationPass()`.
+DefragmentationPassMoveInfo :: struct {
+	// Number of elements in the `pMoves` array.
+	moveCount: u32,
+	// Array of moves to be performed by the user in the current defragmentation pass.
+	//
+	// Pointer to an array of `moveCount` elements, owned by VMA, created in
+	// `vma.BeginDefragmentationPass()`, destroyed in `vma.EndDefragmentationPass()`.
+	//
+	// For each element, you should:
+	//
+	// 1. Create a new buffer/image in the place pointed by
+	//    `DefragmentationMove.dstMemory` + `DefragmentationMove.dstOffset`.
+	// 2. Copy data from the `DefragmentationMove.srcAllocation` e.g. using
+	//    `vk.CmdCopyBuffer`, `vk.CmdCopyImage`.
+	// 3. Make sure these commands finished executing on the GPU.
+	// 4. Destroy the old buffer/image.
+	//
+	// Only then you can finish defragmentation pass by calling
+	// `vma.EndDefragmentationPass()`. After this call, the allocation will point
+	// to the new place in memory.
+	//
+	// Alternatively, if you cannot move specific allocation, you can set
+	// `DefragmentationMove.operation` to `.IGNORE`.
+	//
+	// Alternatively, if you decide you want to completely remove the allocation:
+	//
+	// 1. Destroy its buffer/image.
+	// 2. Set `DefragmentationMove.operation` to `.DESTROY`.
+	//
+	// Then, after `vma.EndDefragmentationPass()` the allocation will be freed.
+	pMoves:    ^DefragmentationMove,
 }
 
-// odinfmt: disable
-@(default_calling_convention = "c")
-foreign _lib_ {
-	// Creates `Allocator` object.
-	@(link_name = "vmaCreateAllocator")
-	create_allocator :: proc(
-		#by_ptr create_info: Allocator_Create_Info,
-		allocator: ^Allocator) -> vk.Result ---
+// Statistics returned for defragmentation process in function `vma.EndDefragmentation()`.
+DefragmentationStats :: struct {
+	// Total number of bytes that have been copied while moving allocations to different places.
+	bytesMoved:              vk.DeviceSize,
+	// Total number of bytes that have been released to the system by freeing
+	// empty `vk.DeviceMemory` objects.
+	bytesFreed:              vk.DeviceSize,
+	// Number of allocations that have been moved to different places.
+	allocationsMoved:        u32,
+	// Number of empty `vk.DeviceMemory` objects that have been released to the system.
+	deviceMemoryBlocksFreed: u32,
+}
+
+// Parameters of created `VirtualBlock` object to be passed to `vma.CreateVirtualBlock()`.
+VirtualBlockCreateInfo :: struct {
+	// Total size of the virtual block.
+	//
+	// Sizes can be expressed in bytes or any units you want as long as you are
+	// consistent in using them. For example, if you allocate from some array of
+	// structures, 1 can mean single instance of entire structure.
+	size:                 vk.DeviceSize,
+
+	// Use combination of `vma.VirtualBlockCreateFlags`.
+	flags:                VirtualBlockCreateFlags,
+
+	// Custom CPU memory allocation callbacks. Optional.
+	//
+	// Optional, can be nil. When specified, they will be used for all CPU-side
+	// memory allocations.
+	pAllocationCallbacks: ^vk.AllocationCallbacks,
+}
+
+// Parameters of created virtual allocation to be passed to `vma.VirtualAllocate()`.
+VirtualAllocationCreateInfo :: struct {
+	// Size of the allocation.
+	//
+	// Cannot be zero.
+	size:      vk.DeviceSize,
+	// Required alignment of the allocation. Optional.
+	//
+	// Must be power of two. Special value 0 has the same meaning as 1 - means
+	// no special alignment is required, so allocation can start at any offset.
+	alignment: vk.DeviceSize,
+	// Use combination of `vma.VirtualAllocationCreateFlags`.
+	flags:     VirtualAllocationCreateFlags,
+	// Custom pointer to be associated with the allocation. Optional.
+	//
+	// It can be any value and can be used for user-defined purposes. It can be
+	// fetched or changed later.
+	pUserData: rawptr,
+}
+
+// Parameters of an existing virtual allocation, returned by `vma.GetVirtualAllocationInfo()`.
+VirtualAllocationInfo :: struct {
+	// Offset of the allocation.
+	//
+	// Offset at which the allocation was made.
+	offset: vk.DeviceSize,
+	// Size of the allocation.
+	//
+	// Same value as passed in `vma.VirtualAllocationCreateInfo.size`.
+	size: vk.DeviceSize,
+	// Custom pointer associated with the allocation.
+	//
+	// Same value as passed in `vma.VirtualAllocationCreateInfo.pUserData` or to
+	// `vma.SetVirtualAllocationUserData()`.
+	pUserData: rawptr,
+}
+
+@(link_prefix="vma")
+@(default_calling_convention="c")
+foreign vmalib {
+	// Creates `vma.Allocator` object.
+	CreateAllocator :: proc(
+		#by_ptr pCreateInfo: AllocatorCreateInfo,
+		pAllocator: ^Allocator) -> vk.Result ---
 
 	// Destroys allocator object.
-	@(link_name = "vmaDestroyAllocator")
-	destroy_allocator :: proc(allocator: Allocator) ---
+	DestroyAllocator :: proc(
+		allocator: Allocator) ---
 
 	// Returns information about existing `Allocator` object - handle to Vulkan
 	// device etc.
 	//
 	// It might be useful if you want to keep just the `Allocator` handle and
-	// fetch other required handles to `vk.PhysicalDevice`, `vk.Device` etc. every
-	// time using this procedure.
-	@(link_name = "vmaGetAllocatorInfo")
-	get_allocator_info :: proc(
+	// fetch other required handles to `vk.PhysicalDevice`, `vk.Device` etc.
+	// every time using this function.
+	GetAllocatorInfo :: proc(
 		allocator: Allocator,
-		allocator_info: ^Allocator_Info) ---
+		pAllocatorInfo: ^AllocatorInfo) ---
 
-	// `vk.PhysicalDeviceProperties` are fetched from physicalDevice by the
-	// allocator. You can access it here, without fetching it again on your own.
-	@(link_name = "vmaGetPhysicalDeviceProperties")
-	get_physical_device_properties :: proc(
+	// `vk.PhysicalDeviceProperties` are fetched from `physicalDevice` by the
+	// `allocator`. You can access it here, without fetching it again on your own.
+	GetPhysicalDeviceProperties :: proc(
 		allocator: Allocator,
-		physical_device_properties: ^^vk.PhysicalDeviceProperties) ---
+		ppPhysicalDeviceProperties: ^^vk.PhysicalDeviceProperties) ---
 
-	// `vk.PhysicalDeviceMemoryProperties` are fetched from physicalDevice by the
-	// allocator. You can access it here, without fetching it again on your own.
-	@(link_name = "vmaGetMemoryProperties")
-	get_memory_properties :: proc(
+	// `vk.PhysicalDeviceMemoryProperties` are fetched from `physicalDevice` by the
+	// `allocator`. You can access it here, without fetching it again on your own.
+	GetMemoryProperties :: proc(
 		allocator: Allocator,
-		physical_device_memory_properties: ^^vk.PhysicalDeviceMemoryProperties) ---
+		ppPhysicalDeviceMemoryProperties: ^^vk.PhysicalDeviceMemoryProperties) ---
 
 	// Given Memory Type Index, returns Property Flags of this memory type.
 	//
-	// This is just a convenience procedure. Same information can be obtained
-	// using `get_memory_properties()`.
-	@(link_name = "vmaGetMemoryTypeProperties")
-	get_memory_type_properties :: proc(
+	// This is just a convenience function. Same information can be obtained using
+	// `vma.GetMemoryProperties()`.
+	GetMemoryTypeProperties :: proc(
 		allocator: Allocator,
-		memory_type_index: u32,
-		flags: ^vk.MemoryPropertyFlags) ---
+		memoryTypeIndex: u32,
+		pFlags: ^vk.MemoryPropertyFlags) ---
 
 	// Sets index of the current frame.
-	@(link_name = "vmaSetCurrentFrameIndex")
-	set_current_frame_index :: proc(
+	SetCurrentFrameIndex :: proc(
 		allocator: Allocator,
-		frame_index: u32) ---
+		frameIndex: u32) ---
 
 	// Retrieves statistics from current state of the Allocator.
 	//
-	// This procedure is called "calculate" not "get" because it has to traverse
-	// all internal data structures, so it may be quite slow. Use it for debugging
-	// purposes. For faster but more brief statistics suitable to be called every
-	// frame or every allocation, use `get_heap_budgets()`.
+	// This function is called "calculate" not "get" because it has to traverse
+	// all internal data structures, so it may be quite slow. Use it for
+	// debugging purposes. For faster but more brief statistics suitable to be
+	// called every frame or every allocation, use vmaGetHeapBudgets().
 	//
-	// Note that when using allocator from multiple threads, returned information
-	// may immediately become outdated.
-	@(link_name = "vmaCalculateStatistics")
-	calculate_statistics :: proc(
+	// Note that when using allocator from multiple threads, returned
+	// information may immediately become outdated.
+	CalculateStatistics :: proc(
 		allocator: Allocator,
-		stats: ^Total_Statistics) ---
+		pStats: ^TotalStatistics) ---
 
-	// Retrieves information about current memory usage and budget for all memory
-	// heaps.
+	// Retrieves information about current memory usage and budget for all memory heaps.
 	//
-	// `budgets` must point to array with number of elements at least equal to
-	// number of memory heaps in physical device used.
+	// - `allocator`
+	// - `[out] pBudgets` Must point to array with number of elements at least equal to
+	//   number of memory heaps in physical device used.
 	//
-	// This procedure is called "get" not "calculate" because it is very fast,
-	// suitable to be called every frame or every allocation. For more detailed
-	// statistics use `calculate_statistics()`.
+	// This function is called "get" not "calculate" because it is very fast, suitable
+	// to be called every frame or every allocation. For more detailed statistics use
+	// `vma.CalculateStatistics()`.
 	//
-	// Note that when using allocator from multiple threads, returned information
-	// may immediately become outdated.
-	@(link_name = "vmaGetHeapBudgets")
-	get_heap_budgets :: proc(
+	// Note that when using allocator from multiple threads, returned information may
+	// immediately become outdated.
+	GetHeapBudgets :: proc(
 		allocator: Allocator,
-		budgets: [^]Budget) ---
+		pBudgets: ^Budget) ---
 
-	// Helps to find `memory_type_index`, given `memory_type_bits` and
-	// `allocation_create_info`.
+	// Helps to find `memoryTypeIndex`, given `memoryTypeBits` and `AllocationCreateInfo`.
 	//
 	// This algorithm tries to find a memory type that:
 	//
-	// - Is allowed by `memory_type_bits`.
-	// - Contains all the flags from `allocation_create_info.required_flags`.
+	// - Is allowed by `memoryTypeBits`.
+	// - Contains all the flags from `pAllocationCreateInfo->requiredFlags`.
 	// - Matches intended usage.
-	// - Has as many flags from `allocation_create_info.preferred_flags` as
-	//   possible.
+	// - Has as many flags from `pAllocationCreateInfo->preferredFlags` as possible.
 	//
-	// Returns `ERROR_FEATURE_NOT_PRESENT` if not found. Receiving such result
-	// from this PROCEDURE or any other allocating PROCEDURE probably means that
-	// your device doesn't support any memory type with requested features for the
-	// specific type of resource you want to use it for. Please check parameters
-	// of your resource, like image layout (OPTIMAL versus LINEAR) or mip level
-	// count.
-	@(link_name = "vmaFindMemoryTypeIndex")
-	find_memory_type_index :: proc(
+	// Returns `.ERROR_FEATURE_NOT_PRESENT` if not found. Receiving such result
+	// from this function or any other allocating function probably means that your
+	// device doesn't support any memory type with requested features for the specific
+	// type of resource you want to use it for. Please check parameters of your
+	// resource, like image layout (`OPTIMAL` versus `LINEAR`) or mip level count.
+	FindMemoryTypeIndex :: proc(
 		allocator: Allocator,
-		memory_type_bits: u32,
-		#by_ptr allocation_create_info: Allocation_Create_Info,
-		memory_type_index: ^u32) -> vk.Result ---
+		memoryTypeBits: u32,
+		#by_ptr pAllocationCreateInfo: AllocationCreateInfo,
+		pMemoryTypeIndex: ^u32) -> vk.Result ---
 
-	// Helps to find `memory_type_index`, given `vk.BufferCreateInfo` and
-	// `Allocation_Create_Info`.
+	// Helps to find `memoryTypeIndex`, given `VkBufferCreateInfo` and
+	// `AllocationCreateInfo`.
 	//
 	// It can be useful e.g. to determine value to be used as
-	// `Pool_Create_Info.memory_type_index`. It internally creates a temporary,
-	// dummy buffer that never has memory bound.
-	@(link_name = "vmaFindMemoryTypeIndexForBufferInfo")
-	find_memory_type_index_for_buffer_info :: proc(
+	// `PoolCreateInfo.memoryTypeIndex`. It may need to internally create a
+	// temporary, dummy buffer that never has memory bound.
+	FindMemoryTypeIndexForBufferInfo :: proc(
 		allocator: Allocator,
-		#by_ptr buffer_create_info: vk.BufferCreateInfo,
-		#by_ptr allocation_create_info: Allocation_Create_Info,
-		memory_type_index: ^u32) -> vk.Result ---
+		#by_ptr pBufferCreateInfo: vk.BufferCreateInfo,
+		#by_ptr pAllocationCreateInfo: AllocationCreateInfo,
+		pMemoryTypeIndex: ^u32) -> vk.Result ---
 
-	// Find `memory_type_index`, given `vk.ImageCreateInfo` and `Allocation_Create_Info`.
+	// Helps to find `memoryTypeIndex`, given `VkImageCreateInfo` and
+	// `AllocationCreateInfo`.
 	//
 	// It can be useful e.g. to determine value to be used as
-	// `Pool_Create_Info.memory_type_index`. It internally creates a temporary,
-	// dummy image
-	// that never has memory bound.
-	@(link_name = "vmaFindMemoryTypeIndexForImageInfo")
-	find_memory_type_index_for_image_info :: proc(
+	// `PoolCreateInfo.memoryTypeIndex`. It may need to internally create a
+	// temporary, dummy image that never has memory bound.
+	FindMemoryTypeIndexForImageInfo :: proc(
 		allocator: Allocator,
-		#by_ptr image_create_info: vk.ImageCreateInfo,
-		#by_ptr allocation_create_info: Allocation_Create_Info,
-		memory_type_index: ^u32) -> vk.Result ---
+		#by_ptr pImageCreateInfo: vk.ImageCreateInfo,
+		#by_ptr pAllocationCreateInfo: AllocationCreateInfo,
+		pMemoryTypeIndex: ^u32) -> vk.Result ---
 
-	// Allocates Vulkan device memory and creates `Pool` object.
-	@(link_name = "vmaCreatePool")
-	create_pool :: proc(
+	// Allocates Vulkan device memory and creates #Pool object.
+	//
+	// - `allocator` Allocator object.
+	// - `pCreateInfo` Parameters of pool to create.
+	// - `[out] pPool` Handle to created pool.
+	CreatePool :: proc(
 		allocator: Allocator,
-		#by_ptr create_info: Pool_Create_Info,
-		pool: ^Pool) -> vk.Result ---
+		#by_ptr pCreateInfo: PoolCreateInfo,
+		pPool: ^Pool) -> vk.Result ---
 
-	// Destroys `Pool` object and frees Vulkan device memory.
-	@(link_name = "vmaDestroyPool")
-	destroy_pool :: proc(
+	// Destroys #Pool object and frees Vulkan device memory.
+	DestroyPool :: proc(
 		allocator: Allocator,
 		pool: Pool) ---
 
-	// Retrieves statistics of existing `Pool` object.
+	// Retrieves statistics of existing #Pool object.
 	//
-	// Note that when using the pool from multiple threads, returned information
-	// may immediately become outdated.
-	@(link_name = "vmaGetPoolStatistics")
-	get_pool_statistics :: proc(
+	// - `allocator` Allocator object.
+	// - `Pool` object.
+	// - `[out] pPoolStats` Statistics of specified pool.
+	//
+	// Note that when using the pool from multiple threads, returned information may
+	// immediately become outdated.
+	GetPoolStatistics :: proc(
 		allocator: Allocator,
 		pool: Pool,
-		pool_stats: ^Statistics) ---
+		pPoolStats: ^Statistics) ---
 
-	// Retrieves detailed statistics of existing `Pool` object.
-	@(link_name = "vmaCalculatePoolStatistics")
-	calculate_pool_statistics :: proc(
+	// Retrieves detailed statistics of existing #Pool object.
+	//
+	// - `allocator` Allocator object.
+	// - `pool` Pool object.
+	// - `[out] pPoolStats` Statistics of specified pool.
+	CalculatePoolStatistics :: proc(
 		allocator: Allocator,
 		pool: Pool,
-		pool_stats: ^Detailed_Statistics) ---
+		pPoolStats: ^DetailedStatistics) ---
 
-	// Checks magic number in margins around all allocations in given memory pool
-	// in search for corruptions.
-	@(link_name = "vmaCheckPoolCorruption")
-	check_pool_corruption :: proc(
+	// Checks magic number in margins around all allocations in given memory
+	// pool in search for corruptions.
+	//
+	// Corruption detection is enabled only when `VMA_DEBUG_DETECT_CORRUPTION`
+	// macro is defined to nonzero, `VMA_DEBUG_MARGIN` is defined to nonzero and
+	// the pool is created in memory type that is `HOST_VISIBLE` and
+	// `HOST_COHERENT`.
+	//
+	// Possible return values:
+	//
+	// - `vk.Result.ERROR_FEATURE_NOT_PRESENT` - corruption detection is not enabled
+	//   for specified pool.
+	// - `vk.Result.SUCCESS` - corruption detection has been performed and succeeded.
+	// - `vk.Result.ERROR_UNKNOWN` - corruption detection has been performed and found
+	//   memory corruptions around one of the allocations. `VMA_ASSERT` is also
+	//   fired in that case.
+	// - Other value: Error returned by Vulkan, e.g. memory mapping failure.
+	CheckPoolCorruption :: proc(
 		allocator: Allocator,
 		pool: Pool) -> vk.Result ---
 
 	// Retrieves name of a custom pool.
 	//
-	// After the call `name` is either nil or points to an internally-owned
-	// `nil`-terminated string containing name of the pool that was previously
-	// set. The pointer becomes invalid when the pool is destroyed or its name is
-	// changed using `set_pool_name()`.
-	@(link_name = "vmaGetPoolName")
-	get_pool_name :: proc(
+	// After the call `ppName` is either nil or points to an internally-owned
+	// nil-terminated string containing name of the pool that was previously set. The
+	// pointer becomes invalid when the pool is destroyed or its name is changed using
+	// `vma.SetPoolName()`.
+	GetPoolName :: proc(
 		allocator: Allocator,
 		pool: Pool,
-		name: ^cstring) ---
+		ppName: ^cstring) ---
 
 	// Sets name of a custom pool.
 	//
-	// `name` can be either nil or pointer to a `nil`-terminated string with new
-	// name for the pool. Procedure makes internal copy of the string, so it can
-	// be changed or freed immediately after this call.
-	@(link_name = "vmaSetPoolName")
-	set_pool_name :: proc(
+	// `pName` can be either nil or pointer to a nil-terminated string with new name
+	// for the pool. Function makes internal copy of the string, so it can be changed
+	// or freed immediately after this call.
+	SetPoolName :: proc(
 		allocator: Allocator,
 		pool: Pool,
-		name: cstring) ---
+		pName: cstring) ---
 
 	// General purpose memory allocation.
 	//
-	// Inputs:
-	// - `allocator`
-	// - `memory_requirements`
-	// - `create_info`
-	// - [out] `allocation` Handle to allocated memory.
-	// - [out] `allocation_info` Optional. Information about allocated memory. It
-	//   can be later fetched using PROCEDURE `get_allocation_info()`.
+	// - `allocator` The main allocator object.
+	// - `pVkMemoryRequirements` Requirements for the allocated memory.
+	// - `pCreateInfo` Allocation creation parameters.
+	// - `[out] pAllocation` Handle to allocated memory.
+	// - `[out] pAllocationInfo` Optional, can be nil. Information about
+	//   allocated memory. It can be also fetched later using
+	//   vmaGetAllocationInfo().
 	//
-	// You should free the memory using `free_memory()` or `free_memory_pages()`.
+	// The function creates a `Allocation` object without creating a buffer or an image
+	// together with it.
 	//
-	// It is recommended to use `allocate_memory_for_buffer()`,
-	// `allocate_memory_for_image()`, `create_buffer()`, `create_image()` instead
-	// whenever possible.
-	@(link_name = "vmaAllocateMemory")
-	allocate_memory :: proc(
+	// - It is recommended to use `vma.AllocateMemoryForBuffer()`,
+	//   `vma.AllocateMemoryForImage()`, `vma.CreateBuffer()`, `vma.CreateImage()`
+	//   instead whenever possible.
+	// - You can also create a buffer or an image later in an existing allocation using
+	//   `vmaCreateAliasingBuffer2()`, `vmaCreateAliasingImage2()`.
+	// - You can also create a buffer or an image on your own and bind it to an
+	//   existing allocation using `vma.BindBufferMemory2()`, `vma.BindImageMemory2()`.
+	//
+	// You must free the returned allocation object using `vma.FreeMemory()` or
+	// `vma.FreeMemoryPages()`.
+	//
+	// There is also extended version of this function: `vma.AllocateDedicatedMemory()`
+	// that offers additional parameter `pMemoryAllocateNext`.
+	AllocateMemory :: proc(
 		allocator: Allocator,
-		#by_ptr memory_requirements: vk.MemoryRequirements,
-		#by_ptr create_info: Allocation_Create_Info,
-		allocation: ^Allocation,
-		allocation_info: ^Allocation_Info) -> vk.Result ---
+		#by_ptr pVkMemoryRequirements: vk.MemoryRequirements,
+		#by_ptr pCreateInfo: AllocationCreateInfo,
+		pAllocation: ^Allocation,
+		pAllocationInfo: ^AllocationInfo) -> vk.Result ---
+
+	// General purpose allocation of a dedicated memory.
+	//
+	// This function is similar `vma.AllocateMemory()`, but it always allocates
+	// dedicated memory - flag `AllocationCreateFlags.DEDICATED_MEMORY` is
+	// implied. It offers additional parameter `pMemoryAllocateNext`, which can
+	// be used to attach `pNext` chain to the `vk.MemoryAllocateInfo` structure.
+	// It can be useful for importing external memory.
+	AllocateDedicatedMemory :: proc(
+		allocator: Allocator,
+		#by_ptr pVkMemoryRequirements: vk.MemoryRequirements,
+		#by_ptr pCreateInfo: AllocationCreateInfo,
+		pMemoryAllocateNext: rawptr,
+		pAllocation: ^Allocation,
+		pAllocationInfo: ^AllocationInfo) -> vk.Result ---
 
 	// General purpose memory allocation for multiple allocation objects at once.
 	//
 	// - `allocator` Allocator object.
-	// - `vk_memory_requirements` Memory requirements for each allocation.
-	// - `create_info` Creation parameters for each allocation.
-	// - `allocation_count` Number of allocations to make.
-	// - [out] `allocations` Pointer to array that will be filled with handles to
+	// - `pVkMemoryRequirements` Memory requirements for each allocation.
+	// - `pCreateInfo` Creation parameters for each allocation.
+	// - `allocationCount` Number of allocations to make.
+	// - `[out] pAllocations` Pointer to array that will be filled with handles to
 	//   created allocations.
-	// - [out] `allocation_info` Optional. Pointer to array that will be filled
-	//   with parameters of created allocations.
+	// - `[out] pAllocationInfo` Optional. Pointer to array that will be filled with
+	//   parameters of created allocations.
 	//
-	// You should free the memory using `free_memory()` or `free_memory_pages()`.
+	// You should free the memory using `vma.FreeMemory()` or `vma.FreeMemoryPages()`.
 	//
-	// Word "pages" is just a suggestion to use this PROCEDURE to allocate pieces
-	// of memory needed for sparse binding. It is just a general purpose
-	// allocation PROCEDURE able to make multiple allocations at once. It may be
-	// internally optimized to be more efficient than calling `allocate_memory()`
+	// Word "pages" is just a suggestion to use this function to allocate pieces of
+	// memory needed for sparse binding. It is just a general purpose allocation
+	// function able to make multiple allocations at once. It may be internally
+	// optimized to be more efficient than calling `vma.AllocateMemory()`
 	// `allocationCount` times.
 	//
-	// All allocations are made using same parameters. All of them are created out
-	// of the same memory pool and type. If any allocation fails, all allocations
-	// already made within this PROCEDURE call are also freed, so that when
-	// returned result is not `.SUCCESS`, `allocations` array is always entirely
-	// filled with `VK_NULL_HANDLE`.
-	@(link_name = "vmaAllocateMemoryPages")
-	allocate_memory_pages :: proc(
+	// All allocations are made using same parameters. All of them are created out of
+	// the same memory pool and type. If any allocation fails, all allocations already
+	// made within this function call are also freed, so that when returned result is
+	// not `vk.Result.SUCCESS`, `pAllocation` array is always entirely filled with `{}`.
+	AllocateMemoryPages :: proc(
 		allocator: Allocator,
-		memory_requirements: [^]vk.MemoryRequirements,
-		create_info: [^]Allocation_Create_Info,
-		allocation_count: uint,
-		allocations: [^]Allocation,
-		allocation_info: [^]Allocation_Info) -> vk.Result ---
+		#by_ptr pVkMemoryRequirements: vk.MemoryRequirements,
+		#by_ptr pCreateInfo: AllocationCreateInfo,
+		allocationCount: uint,
+		pAllocations: [^]Allocation,
+		pAllocationInfo: [^]AllocationInfo) -> vk.Result ---
 
-	// Allocates memory suitable for given `VkBuffer`.
+	// Allocates memory suitable for given `vk.Buffer`.
 	//
 	// - `allocator`
 	// - `buffer`
-	// - `create_info`
-	// - [out] `allocation` Handle to allocated memory.
-	// - [out] `allocation_info` Optional. Information about allocated memory. It
-	//   can be later fetched using procedure `get_allocation_info()`.
+	// - `pCreateInfo`
+	// - `[out] pAllocation` Handle to allocated memory.
+	// - `[out] pAllocationInfo` Optional. Information about allocated memory. It can
+	//   be later fetched using function `vma.GetAllocationInfo()`.
 	//
-	// It only creates #VmaAllocation. To bind the memory to the buffer, use
-	// `bind_buffer_memory()`.
+	// It only creates `Allocation`. To bind the memory to the buffer, use
+	// `vma.BindBufferMemory()`.
 	//
-	// This is a special-purpose procedure. In most cases you should use
-	// `create_buffer()`.
+	// This is a special-purpose function. In most cases you should use
+	// `vma.CreateBuffer()`.
 	//
-	// You must free the allocation using `free_memory()` when no longer needed.
-	@(link_name = "vmaAllocateMemoryForBuffer")
-	allocate_memory_for_buffer :: proc(
+	// You must free the allocation using `vma.FreeMemory()` when no longer needed.
+	AllocateMemoryForBuffer :: proc(
 		allocator: Allocator,
 		buffer: vk.Buffer,
-		#by_ptr create_info: Allocation_Create_Info,
-		allocation: ^Allocation,
-		allocation_info: ^Allocation_Info) -> vk.Result ---
+		#by_ptr pCreateInfo: AllocationCreateInfo,
+		pAllocation: ^Allocation,
+		pAllocationInfo: ^AllocationInfo) -> vk.Result ---
 
 	// Allocates memory suitable for given `vk.Image`.
 	//
 	// - `allocator`
 	// - `image`
-	// - `create_info`
-	// - [out] `allocation` Handle to allocated memory.
-	// - [out] `allocation_info` Optional. Information about allocated memory. It
-	//   can be later fetched using procedure `get_allocation_info()`.
+	// - `pCreateInfo`
+	// - `[out] pAllocation` Handle to allocated memory.
+	// - `[out] pAllocationInfo` Optional. Information about allocated memory. It can
+	//   be later fetched using function `vma.GetAllocationInfo()`.
 	//
-	// It only creates #VmaAllocation. To bind the memory to the buffer, use
-	// `bind_image_memory()`.
+	// It only creates `Allocation`. To bind the memory to the buffer, use
+	// `vma.BindImageMemory()`.
 	//
-	// This is a special-purpose procedure. In most cases you should use
-	// `create_image()`.
+	// This is a special-purpose function. In most cases you should use
+	// `vma.CreateImage()`.
 	//
-	// You must free the allocation using `free_memory()` when no longer needed.
-	@(link_name = "vmaAllocateMemoryForImage")
-	allocate_memory_for_image :: proc(
+	// You must free the allocation using `vma.FreeMemory()` when no longer needed.
+	AllocateMemoryForImage :: proc(
 		allocator: Allocator,
 		image: vk.Image,
-		#by_ptr create_info: Allocation_Create_Info,
-		allocation: ^Allocation,
-		allocation_info: ^Allocation_Info) -> vk.Result ---
+		#by_ptr pCreateInfo: AllocationCreateInfo,
+		pAllocation: ^Allocation,
+		pAllocationInfo: ^AllocationInfo) -> vk.Result ---
 
-	// Frees memory previously allocated using `allocate_memory()`,
-	// `allocate_memory_for_buffer()`, or `allocate_memory_for_image()`.
+	// Frees memory previously allocated using `vma.AllocateMemory()`,
+	// `vma.AllocateMemoryForBuffer()`, or `vma.AllocateMemoryForImage()`.
 	//
-	// Passing `nil` as `allocation` is valid. Such procedure call is just
-	// skipped.
-	@(link_name = "vmaFreeMemory")
-	free_memory :: proc(
+	// Passing `{}` as `allocation` is valid. Such function call is just skipped.
+	FreeMemory :: proc(
 		allocator: Allocator,
 		allocation: Allocation) ---
 
 	// Frees memory and destroys multiple allocations.
 	//
-	// Word "pages" is just a suggestion to use this procedure to free pieces of
-	// memory used for sparse binding. It is just a general purpose procedure to
-	// free memory and destroy allocations made using e.g. `allocate_memory()`,
-	// `allocate_memory_pages()` and other procedures. It may be internally
-	// optimized to be more efficient than calling `free_memory()`
-	// `allocation_count` times.
+	// Word "pages" is just a suggestion to use this function to free pieces of memory
+	// used for sparse binding. It is just a general purpose function to free memory
+	// and destroy allocations made using e.g. `vma.AllocateMemory()`,
+	// `vma.AllocateMemoryPages()` and other functions. It may be internally optimized to
+	// be more efficient than calling `vma.FreeMemory()` `allocationCount` times.
 	//
-	// Allocations in `allocations` array can come from any memory pools and
-	// types. Passing `nil` as elements of `allocations` array is valid. Such
-	// entries are just skipped.
-	@(link_name = "vmaFreeMemoryPages")
-	free_memory_pages :: proc(
+	// Allocations in `pAllocations` array can come from any memory pools and types.
+	// Passing `{}` as elements of `pAllocations` array is valid. Such entries are just skipped.
+	FreeMemoryPages :: proc(
 		allocator: Allocator,
-		allocation_count: uint,
-		allocations: [^]Allocation) ---
+		allocationCount: uint,
+		pAllocations: [^]Allocation) ---
 
 	// Returns current information about specified allocation.
 	//
-	// Current parameters of given allocation are returned in `allocation_info`.
+	// Current parameters of given allocation are returned in `pAllocationInfo`.
 	//
-	// Although this procedure doesn't lock any mutex, so it should be quite
-	// efficient, you should avoid calling it too often. You can retrieve same
-	// `Allocation_Info` structure while creating your resource, from procedure
-	// `create_buffer()`, `create_image()`. You can remember it if you are sure
-	// parameters don't change (e.g. due to defragmentation).
+	// Although this function doesn't lock any mutex, so it should be quite efficient,
+	// you should avoid calling it too often. You can retrieve same AllocationInfo
+	// structure while creating your resource, from function `vma.CreateBuffer()`,
+	// vmaCreateImage(). You can remember it if you are sure parameters don't change
+	// (e.g. due to defragmentation).
 	//
-	// There is also a new procedure `get_allocation_info2()` that offers extended
-	// information about the allocation, returned using new structure
-	// `Allocation_Info2`.
-	@(link_name = "vmaGetAllocationInfo")
-	get_allocation_info :: proc(
+	// There is also a new function vmaGetAllocationInfo2() that offers extended
+	// information about the allocation, returned using new structure `AllocationInfo2`.
+	GetAllocationInfo :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		allocation_info: ^Allocation_Info) ---
+		pAllocationInfo: ^AllocationInfo) ---
 
 	// Returns extended information about specified allocation.
 	//
-	// Current parameters of given allocation are returned in `allocation_info`.
-	// Extended parameters in structure `Allocation_Info2` include memory block
-	// size and a flag telling whether the allocation has dedicated memory. It can
-	// be useful e.g. for interop with OpenGL.
-	@(link_name = "vmaGetAllocationInfo2")
-	get_allocation_info2 :: proc(
+	// Current parameters of given allocation are returned in `pAllocationInfo`.
+	// Extended parameters in structure `AllocationInfo2` include memory block size
+	// and a flag telling whether the allocation has dedicated memory.
+	// It can be useful e.g. for interop with OpenGL.
+	GetAllocationInfo2 :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		allocation_info: ^Allocation_Info2) ---
+		pAllocationInfo: ^AllocationInfo2) ---
 
-	// Sets user_data in given allocation to new value.
+	// Sets `pUserData` in given allocation to new value.
 	//
-	// The value of pointer `user_data` is copied to allocation's `user_data`. It
-	// is opaque, so you can use it however you want - e.g. as a pointer, ordinal
-	// number or some handle to you own data.
-	@(link_name = "vmaSetAllocationUserData")
-	set_allocation_user_data :: proc(
+	// The value of pointer `pUserData` is copied to allocation's `pUserData`.
+	// It is opaque, so you can use it however you want - e.g.
+	// as a pointer, ordinal number or some handle to you own data.
+	SetAllocationUserData :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		user_data: rawptr) ---
+		pUserData: rawptr) ---
 
-	// Sets name in given allocation to new value.
+	// Sets pName in given allocation to new value.
 	//
-	// `name` must be either `nil`, or a pointer to a `nil`-terminated string. The
-	// procedure makes a local copy of the string and sets it as allocation's
-	// `name`. The string passed as `name` doesn't need to be valid for the whole
-	// lifetime of the allocation - you can free it after this call. The string
-	// previously pointed to by allocation's `name` is freed from memory.
-	@(link_name = "vmaSetAllocationName")
-	set_allocation_name :: proc(
+	// `pName` must be either nil, or pointer to a nil-terminated string. The function
+	// makes local copy of the string and sets it as allocation's `pName`. String
+	// passed as pName doesn't need to be valid for whole lifetime of the allocation -
+	// you can free it after this call. String previously pointed by allocation's
+	// `pName` is freed from memory.
+	SetAllocationName :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		name: cstring) ---
-
-	// Given an allocation, returns Win32 handle that may be imported by other
-	// processes or APIs.
-	//
-	// -  `target_process` Must be a valid handle to target process or null. If
-	//    it's null, the procedure returns handle for the current process.
-	// - [out] `handle` Output parameter that returns the handle.
-	//
-	// The procedure fills `handle` with handle that can be used in target
-	// process. The handle is fetched using procedure
-	// `vk.GetMemoryWin32HandleKHR`. When no longer needed, you must close it
-	// using:
-	//
-	// ```
-	// win32.CloseHandle(handle)
-	// ```
-	//
-	// You can close it any time, before or after destroying the allocation
-	// object. It is reference-counted internally by Windows.
-	//
-	// Note the handle is returned for the entire `vk.DeviceMemory` block that the
-	// allocation belongs to. If the allocation is sub-allocated from a larger
-	// block, you may need to consider the offset of the allocation
-	// (`Allocation_Info.offset`).
-	//
-	// If the procedure fails with `vk.ERROR_FEATURE_NOT_PRESENT` error code,
-	// please double-check that `Vulkan_Functions.get_memory_win32_handle_khr`
-	// procedure pointer is set, e.g. either by using
-	// `VMA_DYNAMIC_VULKAN_FUNCTIONS` or by manually passing it through
-	// `Allocator_Create_Info.vulkan_functions`.
-	@(link_name = "vmaGetMemoryWin32Handle")
-	get_memory_win32_handle :: proc(
-		allocator: Allocator,
-		allocation: Allocation,
-		target_process: vk.HANDLE,
-		handle: ^vk.HANDLE) -> vk.Result ---
+		pName: cstring) ---
 
 	// Given an allocation, returns Property Flags of its memory type.
 	//
-	// This is just a convenience procedure. Same information can be obtained
-	// using `get_allocation_info()` + `get_memory_properties()`.
-	@(link_name = "vmaGetAllocationMemoryProperties")
-	get_allocation_memory_properties :: proc(
+	// This is just a convenience function. Same information can be obtained using
+	// `vma.GetAllocationInfo()` + `vma.GetMemoryProperties()`.
+	GetAllocationMemoryProperties :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		flags: ^vk.MemoryPropertyFlags) ---
+		pFlags: ^vk.MemoryPropertyFlags) ---
 
 	// Maps memory represented by given allocation and returns pointer to it.
 	//
-	// Maps memory represented by given allocation to make it accessible to CPU
-	// code. When succeeded, `*data` contains a pointer to the first byte of this
-	// memory.
+	// Maps memory represented by given allocation to make it accessible to CPU code.
+	// When succeeded, `*ppData` contains pointer to first byte of this memory.
 	//
-	// Warning: If the allocation is part of a bigger `VkDeviceMemory` block, the
-	// returned pointer is correctly offset to the beginning of the region
-	// assigned to this particular allocation. Unlike the result of `vkMapMemory`,
-	// it points to the allocation, not to the beginning of the whole block. You
-	// should not add VmaAllocationInfo::offset to it!
+	// **WARNING**
 	//
-	// Mapping is internally reference-counted and synchronized, so despite raw
-	// Vulkan procedure `vkMapMemory()` cannot be used to map the same block of
-	// `VkDeviceMemory` multiple times simultaneously, it is safe to call this
-	// procedure on allocations assigned to the same memory block. Actual Vulkan
-	// memory will be mapped on the first mapping and unmapped on the last
-	// unmapping.
+	// If the allocation is part of a bigger `vk.DeviceMemory` block, returned pointer
+	// is correctly offsetted to the beginning of region assigned to this particular
+	// allocation. Unlike the result of `vk.MapMemory`, it points to the allocation,
+	// not to the beginning of the whole block. You should not add
+	// `vma.AllocationInfo.offset` to it!
 	//
-	// If the procedure succeeded, you must call `unmap_memory()` to unmap the
-	// allocation when mapping is no longer needed or before freeing the
-	// allocation, at the latest.
+	// Mapping is internally reference-counted and synchronized, so despite raw Vulkan
+	// function `vk.MapMemory()` cannot be used to map same block of `vk.DeviceMemory`
+	// multiple times simultaneously, it is safe to call this function on allocations
+	// assigned to the same memory block. Actual Vulkan memory will be mapped on first
+	// mapping and unmapped on last unmapping.
 	//
-	// It is also safe to call this procedure multiple times on the same
-	// allocation. You must call `unmap_memory()` the same number of times as you
-	// called `map_memory()`.
+	// If the function succeeded, you must call `vma.UnmapMemory()` to unmap the
+	// allocation when mapping is no longer needed or before freeing the allocation, at
+	// the latest.
 	//
-	// This procedure fails when used on an allocation made in a memory type that
-	// is not `HOST_VISIBLE`.
+	// It also safe to call this function multiple times on the same allocation. You
+	// must call `vma.UnmapMemory()` same number of times as you called
+	// `vma.MapMemory()`.
 	//
-	// This procedure doesn't automatically flush or invalidate caches. If the
-	// allocation is made from a memory type that is not `HOST_COHERENT`, you also
-	// need to use `invalidate_allocation()` / `flush_allocation()`, as required
+	// It is also safe to call this function on allocation created with
+	// `vma.AllocationCreateFlags.MAPPED` flag. Its memory stays mapped all the time.
+	// You must still call `vma.UnmapMemory()` same number of times as you called
+	// `vma.MapMemory()`. You must not call `vma.UnmapMemory()` additional time to free
+	// the "0-th" mapping made automatically due to `vma.AllocationCreateFlags.MAPPED` flag.
+	//
+	// This function fails when used on allocation made in memory type that is not `HOST_VISIBLE`.
+	//
+	// This function doesn't automatically flush or invalidate caches. If the
+	// allocation is made from a memory types that is not `HOST_COHERENT`, you also
+	// need to use `vma.InvalidateAllocation()` / `vma.FlushAllocation()`, as required
 	// by Vulkan specification.
-	@(link_name = "vmaMapMemory")
-	map_memory :: proc(
+	MapMemory :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		data: ^rawptr) -> vk.Result ---
+		ppData: ^rawptr) -> vk.Result ---
 
-	// Unmaps memory represented by given allocation, mapped previously using
-	// `map_memory()`.
+	// Unmaps memory represented by given allocation, mapped previously using `vma.MapMemory()`.
 	//
-	// For details, see the description of `map_memory()`.
+	// For details, see description of `vma.MapMemory()`.
 	//
-	// This procedure doesn't automatically flush or invalidate caches. If the
-	// allocation is made from a memory type that is not `HOST_COHERENT`, you also
-	// need to use `invalidate_allocation()` / `flush_allocation()`, as required
+	// This function doesn't automatically flush or invalidate caches. If the
+	// allocation is made from a memory types that is not `HOST_COHERENT`, you also
+	// need to use `vma.InvalidateAllocation()` / `vma.FlushAllocation()`, as required
 	// by Vulkan specification.
-	@(link_name = "vmaUnmapMemory")
-	unmap_memory :: proc(
+	UnmapMemory :: proc(
 		allocator: Allocator,
 		allocation: Allocation) ---
 
 	// Flushes memory of given allocation.
 	//
-	// Calls `vk.FlushMappedMemoryRanges()` for memory associated with the given
-	// range of the given allocation. It needs to be called after writing to a
-	// mapped memory for memory types that are not `HOST_COHERENT`. Unmap
-	// operation doesn't do that automatically.
+	// Calls `vk.FlushMappedMemoryRanges()` for memory associated with given range of
+	// given allocation. It needs to be called after writing to a mapped memory for
+	// memory types that are not `HOST_COHERENT`. Unmap operation doesn't do that
+	// automatically.
 	//
-	// - `offset` must be relative to the beginning of the allocation.
-	// - `size` can be `vk.WHOLE_SIZE`. It means all memory from `offset` to the
-	//   end of the given allocation.
+	// - `offset` must be relative to the beginning of allocation.
+	// - `size` can be `vk.WHOLE_SIZE`. It means all memory from `offset` the the end
+	//   of given allocation.
 	// - `offset` and `size` don't have to be aligned. They are internally rounded
-	//   down/up to a multiple of `nonCoherentAtomSize`.
+	//   down/up to multiply of `nonCoherentAtomSize`.
 	// - If `size` is 0, this call is ignored.
-	// - If the memory type that the `allocation` belongs to is not `HOST_VISIBLE`
-	//   or it is `HOST_COHERENT`, this call is ignored.
+	// - If memory type that the `allocation` belongs to is not `HOST_VISIBLE` or it is
+	//   `HOST_COHERENT`, this call is ignored.
 	//
-	// Warning! `offset` and `size` are relative to the contents of the given
-	// `allocation`. If you mean the whole allocation, you can pass 0 and
-	// `vk.WHOLE_SIZE`, respectively. Do not pass the allocation's offset as
-	// `offset`!!!
+	// Warning! `offset` and `size` are relative to the contents of given `allocation`.
+	// If you mean whole allocation, you can pass 0 and `vk.WHOLE_SIZE`, respectively.
+	// Do not pass allocation's offset as `offset`!!!
 	//
-	// This procedure returns the `vk.Result` from `vk.FlushMappedMemoryRanges` if
-	// it is called, otherwise `vk.SUCCESS`.
-	@(link_name = "vmaFlushAllocation")
-	flush_allocation :: proc(
+	// This function returns the `vk.Result` from `vk.FlushMappedMemoryRanges` if it is
+	// called, otherwise `VK_SUCCESS`.
+	FlushAllocation :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
 		offset: vk.DeviceSize,
@@ -1104,29 +1772,27 @@ foreign _lib_ {
 
 	// Invalidates memory of given allocation.
 	//
-	// Calls `vk.InvalidateMappedMemoryRanges()` for memory associated with the
-	// given range of the given allocation. It needs to be called before reading
-	// from a mapped memory for memory types that are not `HOST_COHERENT`. Map
-	// operation doesn't do that automatically.
+	// Calls `vk.InvalidateMappedMemoryRanges()` for memory associated with given range
+	// of given allocation. It needs to be called before reading from a mapped memory
+	// for memory types that are not `HOST_COHERENT`. Map operation doesn't do that
+	// automatically.
 	//
-	// - `offset` must be relative to the beginning of the allocation.
-	// - `size` can be `vk.WHOLE_SIZE`. It means all memory from `offset` to the
-	//   end of the given allocation.
+	// - `offset` must be relative to the beginning of allocation.
+	// - `size` can be `vk.WHOLE_SIZE`. It means all memory from `offset` the the end
+	//   of given allocation.
 	// - `offset` and `size` don't have to be aligned. They are internally rounded
-	//   down/up to a multiple of `nonCoherentAtomSize`.
+	//   down/up to multiply of `nonCoherentAtomSize`.
 	// - If `size` is 0, this call is ignored.
-	// - If the memory type that the `allocation` belongs to is not `HOST_VISIBLE`
-	//   or it is `HOST_COHERENT`, this call is ignored.
+	// - If memory type that the `allocation` belongs to is not `HOST_VISIBLE` or it is
+	//   `HOST_COHERENT`, this call is ignored.
 	//
-	// Warning! `offset` and `size` are relative to the contents of the given
-	// `allocation`. If you mean the whole allocation, you can pass 0 and
-	// `vk.WHOLE_SIZE`, respectively. Do not pass the allocation's offset as
-	// `offset`!!!
+	// Warning! `offset` and `size` are relative to the contents of given `allocation`.
+	// If you mean whole allocation, you can pass 0 and `vk.WHOLE_SIZE`, respectively.
+	// Do not pass allocation's offset as `offset`!!!
 	//
-	// This procedure returns the `VkResult` from
-	// `vk.InvalidateMappedMemoryRanges` if it is called, otherwise `vk.SUCCESS`.
-	@(link_name = "vmaInvalidateAllocation")
-	invalidate_allocation :: proc(
+	// This function returns the `vk.Result` from `vk.InvalidateMappedMemoryRanges` if
+	// it is called, otherwise `vk.Result.SUCCESS`.
+	InvalidateAllocation :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
 		offset: vk.DeviceSize,
@@ -1134,674 +1800,758 @@ foreign _lib_ {
 
 	// Flushes memory of given set of allocations.
 	//
-	// Calls `vk.FlushMappedMemoryRanges()` for memory associated with the given
-	// ranges of the given allocations.
+	// Calls `vk.FlushMappedMemoryRanges()` for memory associated with given ranges of
+	// given allocations. For more information, see documentation of
+	// `vma.FlushAllocation()`.
 	//
-	// - `allocator`: The allocator object.
-	// - `allocation_count`: The number of allocations to flush.
-	// - `allocations`: An array of allocations to flush.
-	// - `offsets`: If not `nil`, it must point to an array of offsets of regions
-	//   to flush, relative to the beginning of respective allocations. `nil`
-	//   means all offsets are zero.
-	// - `sizes`: If not `nil`, it must point to an array of sizes of regions to
-	//   flush in respective allocations. `nil` means `vk.WHOLE_SIZE` for all
-	//   allocations.
+	// - `allocator`
+	// - `allocationCount`
+	// - `allocations`
+	// - `offsets` If not nil, it must point to an array of offsets of regions to
+	//   flush, relative to the beginning of respective allocations. Null means all
+	//   offsets are zero.
+	// - `sizes` If not nil, it must point to an array of sizes of regions to flush in
+	//   respective allocations. Null means `vk.WHOLE_SIZE` for all allocations.
 	//
-	// This procedure returns the `VkResult` from `vk.FlushMappedMemoryRanges` if
-	// it is called, otherwise `vk.SUCCESS`.
-	@(link_name = "vmaFlushAllocations")
-	flush_allocations :: proc(
+	// This function returns the `vk.Result` from `vk.FlushMappedMemoryRanges` if it is
+	// called, otherwise `vk.Result.SUCCESS`.
+	FlushAllocations :: proc(
 		allocator: Allocator,
-		allocation_count: u32,
+		allocationCount: u32,
 		allocations: [^]Allocation,
 		offsets: [^]vk.DeviceSize,
 		sizes: [^]vk.DeviceSize) -> vk.Result ---
 
 	// Invalidates memory of given set of allocations.
 	//
-	// Calls `vk.InvalidateMappedMemoryRanges()` for memory associated with the
-	// given ranges of the given allocations.
+	// Calls `vk.InvalidateMappedMemoryRanges()` for memory associated with given ranges
+	// of given allocations. For more information, see documentation of
+	// `vma.InvalidateAllocation()`.
 	//
-	// - `allocator`: The allocator object.
-	// - `allocation_count`: The number of allocations to invalidate.
-	// - `allocations`: An array of allocations to invalidate.
-	// - `offsets`: If not `nil`, it must point to an array of offsets of regions
-	//   to invalidate, relative to the beginning of respective allocations. `nil`
-	//   means all offsets are zero.
-	// - `sizes`: If not `nil`, it must point to an array of sizes of regions to
-	//   invalidate in respective allocations. `nil` means `vk.WHOLE_SIZE` for all
-	//   allocations.
+	// - `allocator`
+	// - `allocationCount`
+	// - `allocations`
+	// - `offsets` If not nil, it must point to an array of offsets of regions to
+	//   flush, relative to the beginning of respective allocations. Null means all
+	//   offsets are zero.
+	// - `sizes` If not nil, it must point to an array of sizes of regions to flush in
+	//   respective allocations. Null means `vk.WHOLE_SIZE` for all allocations.
 	//
-	// This procedure returns the `VkResult` from
-	// `vk.InvalidateMappedMemoryRanges` if it is called, otherwise `vk.SUCCESS`.
-	@(link_name = "vmaInvalidateAllocations")
-	invalidate_allocations :: proc(
+	// This function returns the `vk.Result` from `vk.InvalidateMappedMemoryRanges` if
+	// it is called, otherwise `vk.Result.SUCCESS`.
+	InvalidateAllocations :: proc(
 		allocator: Allocator,
-		allocation_count: u32,
+		allocationCount: u32,
 		allocations: [^]Allocation,
 		offsets: [^]vk.DeviceSize,
 		sizes: [^]vk.DeviceSize) -> vk.Result ---
 
-	// Maps the allocation temporarily if needed, copies data from the specified
-	// host pointer to it, and flushes the memory from the host caches if needed.
+	// Maps the allocation temporarily if needed, copies data from specified host
+	// pointer to it, and flushes the memory from the host caches if needed.
 	//
-	// - `allocator`: The allocator object.
-	// - `src_data`: Pointer to the host data that becomes the source of the copy.
-	// - `dst_allocation`: Handle to the allocation that becomes the destination
-	//   of the copy.
-	// - `dst_offset`: Offset within `dst_allocation` where to write the copied
+	// - `allocator`
+	// - `pSrcHostPointer` Pointer to the host data that become source of the copy.
+	// - `dstAllocation` Handle to the allocation that becomes destination of the copy.
+	// - `dstAllocationLocalOffset` Offset within `dstAllocation` where to write copied
 	//   data, in bytes.
-	// - `size`: Number of bytes to copy.
+	// - `size` Number of bytes to copy.
 	//
-	// This is a convenience procedure that allows copying data from a host
-	// pointer to an allocation easily. The same behavior can be achieved by
-	// calling `map_memory()`, `memcpy()`, `unmap_memory()`, and
-	// `flush_allocation()`.
+	// This is a convenience function that allows to copy data from a host pointer to
+	// an allocation easily. Same behavior can be achieved by calling
+	// `vma.MapMemory()`, `copy()`, `vma.UnmapMemory()`, `vma.FlushAllocation()`.
 	//
-	// This procedure can be called only for allocations created in a memory type
-	// that has `VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT` flag. It can be ensured,
-	// e.g., by using `VMA_MEMORY_USAGE_AUTO` and
-	// `VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT` or
-	// `VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT`. Otherwise, the procedure
-	// will fail and generate a Validation Layers error.
+	// This function can be called only for allocations created in a memory type that
+	// has `vk.MemoryPropertyFlags.HOST_VISIBLE` flag. It can be ensured e.g. by using
+	// `vma.MemoryUsage.AUTO` and
+	// `vma.AllocationCreateFlags.HOST_ACCESS_SEQUENTIAL_WRITE` or
+	// `vma.AllocationCreateFlags.HOST_ACCESS_RANDOM`. Otherwise, the function will fail
+	// and generate a Validation Layers error.
 	//
-	// `dst_offset` is relative to the contents of the given `dst_allocation`. If
-	// you mean the whole allocation, you should pass 0. Do not pass the
-	// allocation's offset within the device memory block as this parameter!
-	@(link_name = "vmaCopyMemoryToAllocation")
-	copy_memory_to_allocation :: proc(
+	// `dstAllocationLocalOffset` is relative to the contents of given `dstAllocation`.
+	// If you mean whole allocation, you should pass 0. Do not pass allocation's offset
+	// within device memory block this parameter!
+	CopyMemoryToAllocation :: proc(
 		allocator: Allocator,
-		src_data: rawptr,
-		dst_allocation: Allocation,
-		dst_offset: vk.DeviceSize,
+		pSrcHostPointer: rawptr,
+		dstAllocation: Allocation,
+		dstAllocationLocalOffset: vk.DeviceSize,
 		size: vk.DeviceSize) -> vk.Result ---
 
-	// Invalidates memory in the host caches if needed, maps the allocation
-	// temporarily if needed, and copies data from it to a specified host pointer.
+	// Invalidates memory in the host caches if needed, maps the allocation temporarily
+	// if needed, and copies data from it to a specified host pointer.
 	//
-	// - `allocator`: The allocator object.
-	// - `src_allocation`: Handle to the allocation that becomes the source of the
-	//   copy.
-	// - `src_offset`: Offset within `src_allocation` where to read the copied
+	// - `allocator`
+	// - `srcAllocation` Handle to the allocation that becomes source of the copy.
+	// - `srcAllocationLocalOffset` Offset within `srcAllocation` where to read copied
 	//   data, in bytes.
-	// - `dst_host_pointer`: Pointer to the host memory that becomes the
-	//   destination of the copy.
-	// - `size`: Number of bytes to copy.
+	// - `pDstHostPointer` Pointer to the host memory that become destination of the  copy.
+	// - `size` Number of bytes to copy.
 	//
-	// This is a convenience procedure that allows copying data from an allocation
-	// to a host pointer easily. The same behavior can be achieved by calling
-	// vmaInvalidateAllocation(), vmaMapMemory(), `memcpy()`, and
-	// vmaUnmapMemory().
+	// This is a convenience function that allows to copy data from an allocation to a
+	// host pointer easily. Same behavior can be achieved by calling
+	// `vma.InvalidateAllocation()`, `vma.MapMemory()`, `copy()`, `vma.UnmapMemory()`.
 	//
-	// This procedure should be called only for allocations created in a memory
-	// type that has `VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT` and
-	// `VK_MEMORY_PROPERTY_HOST_CACHED_BIT` flag. It can be ensured, e.g., by
-	// using `VMA_MEMORY_USAGE_AUTO` and
-	// `VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT`. Otherwise, the procedure
-	// may fail and generate a Validation Layers error. It may also work very
-	// slowly when reading from an uncached memory.
+	// This function should be called only for allocations created in a memory type
+	// that has `vk.MemoryPropertyFlags.HOST_VISIBLE` and
+	// `vk.MemoryPropertyFlags.HOST_CACHED` flag. It can be ensured e.g. by using
+	// `vma.MemoryUsage.AUTO` and `vma.AllocationCreateFlags.HOST_ACCESS_RANDOM`.
+	// Otherwise, the function may fail and generate a Validation Layers error. It may
+	// also work very slowly when reading from an uncached memory.
 	//
-	// `src_offset` is relative to the contents of the given `src_allocation`. If
-	// you mean the whole allocation, you should pass 0. Do not pass the
-	// allocation's offset within the device memory block as this parameter!
-	@(link_name = "vmaCopyAllocationToMemory")
-	copy_allocation_to_memory :: proc(
+	// `srcAllocationLocalOffset` is relative to the contents of given `srcAllocation`.
+	// If you mean whole allocation, you should pass 0. Do not pass allocation's offset
+	// within device memory block as this parameter!
+	CopyAllocationToMemory :: proc(
 		allocator: Allocator,
-		src_allocation: Allocation,
-		src_offset: vk.DeviceSize,
-		dst_host_pointer: rawptr,
+		srcAllocation: Allocation,
+		srcAllocationLocalOffset: vk.DeviceSize,
+		pDstHostPointer: rawptr,
 		size: vk.DeviceSize) -> vk.Result ---
 
-	// Checks magic number in margins around all allocations in given memory types
-	// (in both default and custom pools) in search for corruptions.
+	// Checks magic number in margins around all allocations in given memory types (in
+	// both default and custom pools) in search for corruptions.
 	//
-	// - `allocator`: The allocator object.
-	// - `memory_type_bits`: Bit mask, where each bit set means that a memory type
-	//   with that index should be checked.
+	// - `allocator`
+	// - `memoryTypeBits` Bit mask, where each bit set means that a memory type with
+	//   that index should be checked.
 	//
-	// Corruption detection is enabled only when `VMA_DEBUG_DETECT_CORRUPTION`
-	// macro is defined to nonzero, `VMA_DEBUG_MARGIN` is defined to nonzero, and
-	// only for memory types that are `HOST_VISIBLE` and `HOST_COHERENT`.
+	// Corruption detection is enabled only when `VMA_DEBUG_DETECT_CORRUPTION` macro is
+	// defined to nonzero, `VMA_DEBUG_MARGIN` is defined to nonzero and only for memory
+	// types that are `HOST_VISIBLE` and `HOST_COHERENT`. For more information, see
+	// Corruption detection documentation.
 	//
 	// Possible return values:
 	//
-	// - `vk.ERROR_FEATURE_NOT_PRESENT`: Corruption detection is not enabled for
-	//   any of the specified memory types.
-	// - `vk.SUCCESS`: Corruption detection has been performed and succeeded.
-	// - `VK_ERROR_UNKNOWN`: Corruption detection has been performed and found
-	//   memory corruptions around one of the allocations. `VMA_ASSERT` is also
-	//   fired in that case.
-	// - Other value: Error returned by Vulkan, e.g., memory mapping failure.
-	@(link_name = "vmaCheckCorruption")
-	check_corruption :: proc(
+	// - `.ERROR_FEATURE_NOT_PRESENT` - corruption detection is not enabled for any
+	//   of specified memory types.
+	// - `.SUCCESS` - corruption detection has been performed and succeeded.
+	// - `.ERROR_UNKNOWN` - corruption detection has been performed and found memory
+	//   corruptions around one of the allocations. `VMA_ASSERT` is also fired in that case.
+	// - Other value: Error returned by Vulkan, e.g. memory mapping failure.
+	CheckCorruption :: proc(
 		allocator: Allocator,
-		memory_type_bits: u32) -> vk.Result ---
+		memoryTypeBits: u32) -> vk.Result ---
 
 	// Begins defragmentation process.
 	//
-	// - `allocator`: The allocator object.
-	// - `defragmentation_info`: Structure filled with parameters of
-	//   defragmentation.
-	// - `ctx`: Context object that must be passed to `end_defragmentation()` to
-	//   finish defragmentation.
+	// - `allocator` Allocator object.
+	// - `pInfo` Structure filled with parameters of defragmentation.
+	// - `[out] pContext` Context object that must be passed to `vma.EndDefragmentation()`
+	//   to finish defragmentation.
 	//
 	// Returns:
-	// - `vk.SUCCESS` if defragmentation can begin.
-	// - `vk.ERROR_FEATURE_NOT_PRESENT` if defragmentation is not supported.
-	@(link_name = "vmaBeginDefragmentation")
-	begin_defragmentation :: proc(
+	//
+	// - `.SUCCESS` if defragmentation can begin.
+	// - `.ERROR_FEATURE_NOT_PRESENT` if defragmentation is not supported.
+	//
+	// For more information about defragmentation, see documentation chapter for
+	// Defragmentation.
+	BeginDefragmentation :: proc(
 		allocator: Allocator,
-		#by_ptr defragmentation_info: Defragmentation_Info,
-		ctx: ^Defragmentation_Context) -> vk.Result ---
+		#by_ptr pInfo: DefragmentationInfo,
+		pContext: ^DefragmentationContext) -> vk.Result ---
 
 	// Ends defragmentation process.
 	//
-	// - `allocator`: The allocator object.
-	// - `ctx`: Context object that has been created by vmaBeginDefragmentation().
-	// - `stats`: Optional stats for the defragmentation. Can be `nil`.
+	// - `allocator` Allocator object.
+	// - `ctx` Context object that has been created by `vma.BeginDefragmentation()`.
+	// - `[out] pStats` Optional stats for the defragmentation. Can be nil.
 	//
-	// Use this procedure to finish defragmentation started by
-	// vmaBeginDefragmentation().
-	@(link_name = "vmaEndDefragmentation")
-	end_defragmentation :: proc(
+	// Use this function to finish defragmentation started by `vma.BeginDefragmentation()`.
+	EndDefragmentation :: proc(
 		allocator: Allocator,
-		ctx: Defragmentation_Context,
-		stats: ^Defragmentation_Stats) ---
+		ctx: DefragmentationContext,
+		pStats: ^DefragmentationStats) ---
 
 	// Starts single defragmentation pass.
 	//
-	// - `allocator`: The allocator object.
-	// - `ctx`: Context object that has been created by `begin_defragmentation()`.
-	// - `pass_info`: Computed information for the current pass.
+	// - `allocator` Allocator object.
+	// - `ctx` Context object that has been created by
+	//   `vma.BeginDefragmentation()`.
+	// - `[out]pPassInfo` Computed information for current pass.
 	//
-	// Returns:
-	// - `vk.SUCCESS` if no more moves are possible. Then you can omit the call to
-	//   `end_defragmentation_pass()` and simply end the whole defragmentation.
-	// - `vk.INCOMPLETE` if there are pending moves returned in `pass_info`. You
-	//   need to perform them, call `end_defragmentation_pass()`, and then
-	//   preferably try another pass with `begin_defragmentation_pass()`.
-	@(link_name = "vmaBeginDefragmentationPass")
-	begin_defragmentation_pass :: proc(
+	// Returns
+	//
+	// - `.SUCCESS` if no more moves are possible. Then you can omit call to
+	//   `vma.EndDefragmentationPass()` and simply end whole defragmentation.
+	// - `.INCOMPLETE` if there are pending moves returned in `pPassInfo`. You need to
+	//   perform them, call `vma.EndDefragmentationPass()`, and then preferably try
+	//   another pass with `vma.BeginDefragmentationPass()`.
+	BeginDefragmentationPass :: proc(
 		allocator: Allocator,
-		ctx: Defragmentation_Context,
-		pass_info: ^Defragmentation_Pass_Move_Info) -> vk.Result ---
+		ctx: DefragmentationContext,
+		pPassInfo: ^DefragmentationPassMoveInfo) -> vk.Result ---
 
 	// Ends single defragmentation pass.
 	//
 	// - `allocator` Allocator object.
-	// - `ctx` Context object that has been created by `begin_defragmentation()`.
-	// - `pass_info` Computed information for current pass filled by
-	//   `begin_defragmentation_pass()` and possibly modified by you.
+	// - `ctx` Context object that has been created by vmaBeginDefragmentation().
+	// - `pPassInfo` Computed information for current pass filled by
+	//   `vma.BeginDefragmentationPass()` and possibly modified by you.
 	//
-	// Returns `vk.SUCCESS` if no more moves are possible or `VK_INCOMPLETE` if
-	// more defragmentations are possible.
+	// Returns `.SUCCESS` if no more moves are possible or `.INCOMPLETE` if more
+	// defragmentations are possible.
 	//
-	// Ends incremental defragmentation pass and commits all defragmentation moves
-	// from `pPassInfo`. After this call:
+	// Ends incremental defragmentation pass and commits all defragmentation moves from
+	// `pPassInfo`. After this call:
 	//
-	// - Allocations at `pPassInfo[i].srcAllocation` that had
-	//   `pPassInfo[i].operation ==` #VMA_DEFRAGMENTATION_MOVE_OPERATION_COPY
-	//   (which is the default) will be pointing to the new destination place.
-	// - Allocation at `pPassInfo[i].srcAllocation` that had
-	//   `pPassInfo[i].operation ==` #VMA_DEFRAGMENTATION_MOVE_OPERATION_DESTROY
-	//   will be freed.
+	// - Allocations at `pPassInfo[i].srcAllocation` that had `pPassInfo[i].operation`
+	//   == `DefragmentationMoveOperation.COPY` (which is the default) will be pointing
+	//   to the new destination place.
+	// - Allocation at `pPassInfo[i].srcAllocation` that had `pPassInfo[i].operation`
+	//   == `DefragmentationMoveOperation.DESTROY` will be freed.
 	//
 	// If no more moves are possible you can end whole defragmentation.
-	@(link_name = "vmaEndDefragmentationPass")
-	end_defragmentation_pass :: proc(
+	EndDefragmentationPass :: proc(
 		allocator: Allocator,
-		ctx: Defragmentation_Context,
-		pass_info: ^Defragmentation_Pass_Move_Info) -> vk.Result ---
+		ctx: DefragmentationContext,
+		pPassInfo: ^DefragmentationPassMoveInfo) -> vk.Result ---
 
 	// Binds buffer to allocation.
 	//
-	// Binds specified buffer to region of memory represented by specified
-	// allocation. Gets `VkDeviceMemory` handle and offset from the allocation. If
-	// you want to create a buffer, allocate memory for it and bind them together
-	// separately, you should use this procedure for binding instead of standard
-	// `vkBindBufferMemory()`, because it ensures proper synchronization so that
-	// when a `VkDeviceMemory` object is used by multiple allocations, calls to
-	// `vkBind*Memory()` or `vkMapMemory()` won't happen from multiple threads
-	// simultaneously (which is illegal in Vulkan).
+	// Binds specified buffer to region of memory represented by specified allocation.
+	// Gets `vk.DeviceMemory` handle and offset from the allocation. If you want to
+	// create a buffer, allocate memory for it and bind them together separately, you
+	// should use this function for binding instead of standard `vk.BindBufferMemory()`,
+	// because it ensures proper synchronization so that when a `vk.DeviceMemory`
+	// object is used by multiple allocations, calls to `vk.Bind*Memory()` or
+	// `vk.MapMemory()` won't happen from multiple threads simultaneously (which is
+	// illegal in Vulkan).
 	//
-	// It is recommended to use procedure `create_buffer()` instead of this one.
-	@(link_name = "vmaBindBufferMemory")
-	bind_buffer_memory :: proc(
+	// It is recommended to use function `vma.CreateBuffer()` instead of this one.
+	BindBufferMemory :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
 		buffer: vk.Buffer) -> vk.Result ---
 
 	// Binds buffer to allocation with additional parameters.
 	//
-	// - `allocator` Allocator object.
-	// - `allocation` Allocation object.
-	// - `allocation_local_offset` Additional offset to be added while binding,
-	//   relative to the beginning of the `allocation`. Normally it should be 0.
-	// - `buffer` Buffer to bind.
-	// - `next` A chain of structures to be attached to
-	//   `VkBindBufferMemoryInfoKHR` structure used internally. Normally it should
-	//   be `nil`.
+	// - `allocator`
+	// - `allocation`
+	// - `allocationLocalOffset` Additional offset to be added while binding, relative
+	//   to the beginning of the `allocation`. Normally it should be 0.
+	// - `buffer`
+	// - `pNext` A chain of structures to be attached to `vk.BindBufferMemoryInfoKHR`
+	//   structure used internally. Normally it should be nil.
 	//
-	// This procedure is similar to `bind_buffer_memory()`, but it provides
-	// additional parameters.
+	// This function is similar to `vma.BindBufferMemory()`, but it provides additional
+	// parameters.
 	//
-	// If `next` is not `nil`, `Allocator` object must have been created with
-	// `VMA_ALLOCATOR_CREATE_KHR_BIND_MEMORY2_BIT` flag or with
-	// `VmaAllocatorCreateInfo::vulkanApiVersion` `>= VK_API_VERSION_1_1`.
-	// Otherwise the call fails.
-	@(link_name = "vmaBindBufferMemory2")
-	bind_buffer_memory2 :: proc(
+	// If `pNext` is not nil, `Allocator` object must have been created with
+	// `AllocatorCreateFlags.KHR_BIND_MEMORY2` flag or with
+	// `AllocatorCreateInfo.vulkanApiVersion` >= `vk.API_VERSION_1_1`. Otherwise the
+	// call fails.
+	BindBufferMemory2 :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		allocation_local_offset: vk.DeviceSize,
+		allocationLocalOffset: vk.DeviceSize,
 		buffer: vk.Buffer,
-		next: rawptr) -> vk.Result ---
+		pNext: rawptr) -> vk.Result ---
 
 	// Binds image to allocation.
 	//
-	// Binds specified image to region of memory represented by specified
-	// allocation. Gets `VkDeviceMemory` handle and offset from the allocation. If
-	// you want to create an image, allocate memory for it and bind them together
-	// separately, you should use this procedure for binding instead of standard
-	// `vkBindImageMemory()`, because it ensures proper synchronization so that
-	// when a `VkDeviceMemory` object is used by multiple allocations, calls to
-	// `vkBind*Memory()` or `vkMapMemory()` won't happen from multiple threads
-	// simultaneously (which is illegal in Vulkan).
+	// Binds specified image to region of memory represented by specified allocation.
+	// Gets `vk.DeviceMemory` handle and offset from the allocation. If you want to
+	// create an image, allocate memory for it and bind them together separately, you
+	// should use this function for binding instead of standard `vk.BindImageMemory()`,
+	// because it ensures proper synchronization so that when a `vk.DeviceMemory`
+	// object is used by multiple allocations, calls to `vkBind*Memory()` or
+	// `vk.MapMemory()` won't happen from multiple threads simultaneously (which is
+	// illegal in Vulkan).
 	//
-	// It is recommended to use procedure `create_image()` instead of this one.
-	@(link_name = "vmaBindImageMemory")
-	bind_image_memory :: proc(
+	// It is recommended to use function `vmaC.reateImage()` instead of this one.
+	BindImageMemory :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
 		image: vk.Image) -> vk.Result ---
 
 	// Binds image to allocation with additional parameters.
 	//
-	// - `allocator` Allocator object.
-	// - `allocation` Allocation object.
-	// - `allocation_local_offset` Additional offset to be added while binding,
-	//   relative to the beginning of the `allocation`. Normally it should be 0.
-	// - `image` Image to bind.
-	// - `next` A chain of structures to be attached to `VkBindImageMemoryInfoKHR`
-	//   structure used internally. Normally it should be `nil`.
+	// - `allocator`
+	// - `allocation`
+	// - `allocationLocalOffset` Additional offset to be added while binding, relative
+	//   to the beginning of the `allocation`. Normally it should be 0.
+	// - `image`
+	// - `pNext` A chain of structures to be attached to `vk.BindImageMemoryInfoKHR`
+	//   structure used internally. Normally it should be nil.
 	//
-	// This procedure is similar to `bind_image_memory()`, but it provides
-	// additional parameters.
+	// This function is similar to `vma.BindImageMemory()`, but it provides additional
+	// parameters.
 	//
-	// If `next` is not `nil`, `Allocator` object must have been created with
-	// `VMA_ALLOCATOR_CREATE_KHR_BIND_MEMORY2_BIT` flag or with
-	// `VmaAllocatorCreateInfo::vulkanApiVersion` `>= VK_API_VERSION_1_1`.
-	// Otherwise the call fails.
-	@(link_name = "vmaBindImageMemory2")
-	bind_image_memory2 :: proc(
+	// If `pNext` is not nil, `Allocator` object must have been created with
+	// `AllocatorCreateFlags.KHR_BIND_MEMORY2` flag or with
+	// `AllocatorCreateInfo.vulkanApiVersion` >= `vk.API_VERSION_1_1`. Otherwise the
+	// call fails.
+	BindImageMemory2 :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		allocation_local_offset: vk.DeviceSize,
+		allocationLocalOffset: vk.DeviceSize,
 		image: vk.Image,
-		next: rawptr) -> vk.Result ---
+		pNext: rawptr) -> vk.Result ---
 
-	// Creates a new `VkBuffer`, allocates and binds memory for it.
+	// Creates a new `vk.Buffer`, allocates and binds memory for it.
 	//
-	// - `allocator` Allocator object.
-	// - `buffer_create_info` Parameters for buffer creation.
-	// - `allocation_create_info` Parameters for memory allocation.
-	// - `buffer` Output parameter for the created buffer.
-	// - `allocation` Output parameter for the created allocation.
-	// - `allocation_info` Optional. Information about allocated memory. It can be
-	//   later fetched using procedure `get_allocation_info()`.
+	// - `allocator` The main allocator object.
+	// - `pBufferCreateInfo` Buffer creation parameters.
+	// - `pAllocationCreateInfo` Allocation creation parameters.
+	// - `[out] pBuffer` Buffer that was created.
+	// - `[out] pAllocation` Allocation that was created.
+	// - `[out] pAllocationInfo` Optional, can be nil. Information about
+	//   allocated memory. It can be also fetched later using
+	//   `vma.GetAllocationInfo()`.
 	//
-	// This procedure automatically:
+	// This function automatically:
+	//
 	// - Creates buffer.
 	// - Allocates appropriate memory for it.
 	// - Binds the buffer with the memory.
 	//
-	// If any of these operations fail, buffer and allocation are not created,
-	// returned value is negative error code, `buffer` and `allocation` are `nil`.
+	// If any of these operations fail, buffer and allocation are not created, returned
+	// value is negative error code, `*pBuffer` and `*pAllocation` are returned as nil.
 	//
-	// If the procedure succeeded, you must destroy both buffer and allocation
-	// when you no longer need them using either convenience procedure
-	// `destroy_buffer()` or separately, using `vkDestroyBuffer()` and
-	// `free_memory()`.
+	// If the function succeeded, you must destroy both buffer and allocation when you
+	// no longer need them using either convenience function `vma.DestroyBuffer()` or
+	// separately, using `vk.DestroyBuffer()` and `vma.FreeMemory()`.
 	//
-	// If `VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT` flag was used,
-	// `VK_KHR_dedicated_allocation` extension is used internally to query driver
-	// whether it requires or prefers the new buffer to have dedicated allocation.
-	// If yes, and if dedicated allocation is possible
-	// (`VMA_ALLOCATION_CREATE_NEVER_ALLOCATE_BIT` is not used), it creates
-	// dedicated allocation for this buffer, just like when using
-	// `VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT`.
-	@(link_name = "vmaCreateBuffer")
-	create_buffer :: proc(
+	// If `VK_KHR_dedicated_allocation` extenion or Vulkan version >= 1.1 is used, the
+	// function queries the driver whether it requires or prefers the new buffer to
+	// have dedicated allocation. If yes, and if dedicated allocation is possible
+	// (`AllocationCreateFlags.NEVER_ALLOCATE` is not used), it creates dedicated
+	// allocation for this buffer, just like when using
+	// `AllocationCreateFlags.DEDICATED_MEMORY`.
+	//
+	// **Note**: This function creates a new `VkBuffer`. Sub-allocation of parts of
+	// one large buffer, although recommended as a good practice, is out of
+	// scope of this library and could be implemented by the user as a
+	// higher-level logic on top of VMA.
+	//
+	// There is also an extended versions of this function available with
+	// additional parameter `pMemoryAllocateNext` - see
+	// `vma.CreateDedicatedBuffer()`.
+	CreateBuffer :: proc(
 		allocator: Allocator,
-		#by_ptr buffer_create_info: vk.BufferCreateInfo,
-		#by_ptr allocation_create_info: Allocation_Create_Info,
-		buffer: ^vk.Buffer,
-		allocation: ^Allocation,
-		allocation_info: ^Allocation_Info) -> vk.Result ---
+		#by_ptr pBufferCreateInfo: vk.BufferCreateInfo,
+		#by_ptr pAllocationCreateInfo: AllocationCreateInfo,
+		pBuffer: ^vk.Buffer,
+		pAllocation: ^Allocation,
+		pAllocationInfo: ^AllocationInfo) -> vk.Result ---
 
 	// Creates a buffer with additional minimum alignment.
 	//
-	// Similar to `create_buffer()` but provides additional parameter
-	// `min_alignment` which allows to specify custom, minimum alignment to be
-	// used when placing the buffer inside a larger memory block, which may be
-	// needed e.g. for interop with OpenGL.
-	@(link_name = "vmaCreateBufferWithAlignment")
-	create_buffer_with_alignment :: proc(
+	// Similar to `vma.CreateBuffer()` but provides additional parameter `minAlignment`
+	// which allows to specify custom, minimum alignment to be used when placing the
+	// buffer inside a larger memory block, which may be needed e.g. for interop with
+	// OpenGL.
+	//
+	// **Deprecated**: This function in obsolete since new
+	// `AllocationCreateInfo.minAlignment` member allows specifying custom alignment
+	// while using any allocation function, like the standard `vma.CreateBuffer()`.
+	@(deprecated="Use AllocationCreateInfo.minAlignment instead")
+	CreateBufferWithAlignment :: proc(
 		allocator: Allocator,
-		#by_ptr buffer_create_info: vk.BufferCreateInfo,
-		#by_ptr allocation_create_info: Allocation_Create_Info,
-		min_alignment: vk.DeviceSize,
-		buffer: ^vk.Buffer,
-		allocation: ^Allocation,
-		allocation_info: ^Allocation_Info) -> vk.Result ---
+		#by_ptr pBufferCreateInfo: vk.BufferCreateInfo,
+		#by_ptr pAllocationCreateInfo: AllocationCreateInfo,
+		minAlignment: vk.DeviceSize,
+		pBuffer: ^vk.Buffer,
+		pAllocation: ^Allocation,
+		pAllocationInfo: ^AllocationInfo) -> vk.Result ---
 
-	// Creates a new `VkBuffer`, binds already created memory for it.
+	// Creates a dedicated buffer while offering extra parameter `pMemoryAllocateNext`.
 	//
-	// - `allocator` Allocator object.
-	// - `allocation` Allocation that provides memory to be used for binding new
-	//   buffer to it.
-	// - `buffer_create_info` Parameters for buffer creation.
-	// - `buffer` Output parameter for the created buffer.
+	// This function is similar `vma.CreateBuffer()`, but it always allocates dedicated
+	// memory for the buffer - flag `AllocationCreateFlags.DEDICATED_MEMORY` is
+	// implied. It offers additional parameter `pMemoryAllocateNext`, which can be used
+	// to attach `pNext` chain to the `vk.MemoryAllocateInfo` structure. It can be
+	// useful for importing external memory. For more information, see \ref
+	// other_api_interop.
+	CreateDedicatedBuffer :: proc(
+		allocator: Allocator,
+		#by_ptr pBufferCreateInfo: vk.BufferCreateInfo,
+		#by_ptr pAllocationCreateInfo: AllocationCreateInfo,
+		pMemoryAllocateNext: rawptr,
+		pBuffer: ^vk.Buffer,
+		pAllocation: ^Allocation,
+		pAllocationInfo: ^AllocationInfo) -> vk.Result ---
+
+	// Creates a new `vk.Buffer`, binds already created memory for it.
 	//
-	// This procedure automatically:
+	// - `allocator`
+	// - `allocation` Allocation that provides memory to be used for binding new buffer
+	//   to it.
+	// - `pBufferCreateInfo`
+	// - `[out] pBuffer` Buffer that was created.
+	//
+	// This function automatically:
+	//
 	// - Creates buffer.
 	// - Binds the buffer with the supplied memory.
 	//
 	// If any of these operations fail, buffer is not created, returned value is
-	// negative error code and `buffer` is `nil`.
+	// negative error code and `*pBuffer` is nil.
 	//
-	// If the procedure succeeded, you must destroy the buffer when you no longer
-	// need it using `vkDestroyBuffer()`. If you want to also destroy the
-	// corresponding allocation you can use convenience procedure
-	// `destroy_buffer()`.
-	@(link_name = "vmaCreateAliasingBuffer")
-	create_aliasing_buffer :: proc(
+	// If the function succeeded, you must destroy the buffer when you no longer need
+	// it using `vk.DestroyBuffer()`. If you want to also destroy the corresponding
+	// allocation you can use convenience function `vma.DestroyBuffer()`.
+	//
+	// **Note**: There is a new version of this function augmented with parameter
+	// `allocationLocalOffset` - see `vma.CreateAliasingBuffer2()`.
+	CreateAliasingBuffer :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		#by_ptr buffer_create_info: vk.BufferCreateInfo,
-		buffer: ^vk.Buffer) -> vk.Result ---
+		#by_ptr pBufferCreateInfo: vk.BufferCreateInfo,
+		pBuffer: ^vk.Buffer) -> vk.Result ---
 
-	// Creates a new `VkBuffer`, binds already created memory for it.
+	// Creates a new `vk.Buffer`, binds already created memory for it.
 	//
-	// - `allocator` Allocator object.
-	// - `allocation` Allocation that provides memory to be used for binding new
-	//   buffer to it.
-	// - `allocation_local_offset` Additional offset to be added while binding,
-	//   relative to the beginning of the allocation. Normally it should be 0.
-	// - `buffer_create_info` Parameters for buffer creation.
-	// - `buffer` Output parameter for the created buffer.
+	// - `allocator`
+	// - `allocation` Allocation that provides memory to be used for binding new buffer
+	//   to it.
+	// - `allocationLocalOffset` Additional offset to be added while binding, relative
+	//   to the beginning of the allocation. Normally it should be 0.
+	// - `pBufferCreateInfo`
+	// - `[out] pBuffer` Buffer that was created.
 	//
-	// This procedure automatically:
+	// This function automatically:
+	//
 	// - Creates buffer.
 	// - Binds the buffer with the supplied memory.
 	//
 	// If any of these operations fail, buffer is not created, returned value is
-	// negative error code and `buffer` is `nil`.
+	// negative error code and `^pBuffer` is nil.
 	//
-	// If the procedure succeeded, you must destroy the buffer when you no longer
-	// need it using `vkDestroyBuffer()`. If you want to also destroy the
-	// corresponding allocation you can use convenience procedure
-	// `destroy_buffer()`.
-	@(link_name = "vmaCreateAliasingBuffer2")
-	create_aliasing_buffer2 :: proc(
+	// If the function succeeded, you must destroy the buffer when you no longer need
+	// it using `vk.DestroyBuffer()`. If you want to also destroy the corresponding
+	// allocation you can use convenience function `vma.DestroyBuffer()`.
+	//
+	// Note: This is a new version of the function augmented with parameter
+	// `allocationLocalOffset`.
+	CreateAliasingBuffer2 :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		allocation_local_offset: vk.DeviceSize,
-		#by_ptr buffer_create_info: vk.BufferCreateInfo,
-		buffer: ^vk.Buffer) -> vk.Result ---
+		allocationLocalOffset: vk.DeviceSize,
+		#by_ptr pBufferCreateInfo: vk.BufferCreateInfo,
+		pBuffer: ^vk.Buffer) -> vk.Result ---
 
 	// Destroys Vulkan buffer and frees allocated memory.
 	//
-	// This is just a convenience procedure equivalent to:
-	// ```
-	// vkDestroyBuffer(device, buffer, allocation_callbacks);
-	// vmaFreeMemory(allocator, allocation);
-	// ```
+	// This is just a convenience function equivalent to:
 	//
-	// It is safe to pass `nil` as buffer and/or allocation.
-	@(link_name = "vmaDestroyBuffer")
-	destroy_buffer :: proc(
+	//    vk.DestroyBuffer(device, buffer, allocationCallbacks)
+	//    vma.FreeMemory(allocator, allocation)
+	//
+	// It is safe to pass nil as buffer and/or allocation.
+	DestroyBuffer :: proc(
 		allocator: Allocator,
 		buffer: vk.Buffer,
 		allocation: Allocation) ---
 
-	// Creates a new `vk.Image`, allocates and binds memory for it.
+	// Function similar to `vma.CreateBuffer()` but for images.
 	//
-	// - `allocator` Allocator object.
-	// - `image_create_info` Parameters for image creation.
-	// - `allocation_create_info` Parameters for memory allocation.
-	// - `image` Output parameter for the created image.
-	// - `allocation` Output parameter for the created allocation.
-	// - `allocation_info` Optional. Information about allocated memory. It can be
-	//   later fetched using procedure `get_allocation_info()`.
-	//
-	// This procedure automatically:
-	// - Creates image.
-	// - Allocates appropriate memory for it.
-	// - Binds the image with the memory.
-	//
-	// If any of these operations fail, image and allocation are not created,
-	// returned value is negative error code, `image` and `allocation` are `nil`.
-	//
-	// If the procedure succeeded, you must destroy both image and allocation when
-	// you no longer need them using either convenience procedure
-	// `destroy_image()` or separately, using `vk.DestroyImage()` and
-	// `free_memory()`.
-	@(link_name = "vmaCreateImage")
-	create_image :: proc(
+	// There is also an extended version of this function available:
+	// `vma.CreateDedicatedImage()` which offers additional parameter
+	// `pMemoryAllocateNext`.
+	CreateImage :: proc(
 		allocator: Allocator,
-		#by_ptr image_create_info: vk.ImageCreateInfo,
-		#by_ptr allocation_create_info: Allocation_Create_Info,
-		image: ^vk.Image,
-		allocation: ^Allocation,
-		allocation_info: ^Allocation_Info) -> vk.Result ---
+		#by_ptr pImageCreateInfo: vk.ImageCreateInfo,
+		#by_ptr pAllocationCreateInfo: AllocationCreateInfo,
+		pImage: ^vk.Image,
+		pAllocation: ^Allocation,
+		pAllocationInfo: ^AllocationInfo) -> vk.Result ---
 
-	// Creates a new `vk.Image`, binds already created memory for it.
+	// Function similar to `vma.CreateDedicatedBuffer()` but for images.
 	//
-	// - `allocator` Allocator object.
-	// - `allocation` Allocation that provides memory to be used for binding new
-	//   image to it.
-	// - `image_create_info` Parameters for image creation.
-	// - `image` Output parameter for the created image.
-	//
-	// This procedure automatically:
-	// - Creates image.
-	// - Binds the image with the supplied memory.
-	//
-	// If any of these operations fail, image is not created, returned value is
-	// negative error code and `image` is `nil`.
-	//
-	// If the procedure succeeded, you must destroy the image when you no longer
-	// need it using `vk.DestroyImage()`. If you want to also destroy the
-	// corresponding allocation you can use convenience procedure
-	// `destroy_image()`.
-	@(link_name = "vmaCreateAliasingImage")
-	create_aliasing_image :: proc(
+	// This function is similar vmaCreateImage(), but it always allocates dedicated
+	// memory for the image - flag `AllocationCreateFlags.DEDICATED_MEMORY` is
+	// implied. It offers additional parameter `pMemoryAllocateNext`, which can be used
+	// to attach `pNext` chain to the `VkMemoryAllocateInfo` structure. It can be
+	// useful for importing external memory. For more information, see \ref
+	// other_api_interop.
+	CreateDedicatedImage :: proc(
+		allocator: Allocator,
+		#by_ptr pImageCreateInfo: vk.ImageCreateInfo,
+		#by_ptr pAllocationCreateInfo: AllocationCreateInfo,
+		pMemoryAllocateNext: rawptr,
+		pImage: ^vk.Image,
+		pAllocation: ^Allocation,
+		pAllocationInfo: ^AllocationInfo) -> vk.Result ---
+
+	// Function similar to `vma.CreateAliasingBuffer()` but for images.
+	CreateAliasingImage :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		#by_ptr image_create_info: vk.ImageCreateInfo,
-		image: ^vk.Image) -> vk.Result ---
+		#by_ptr pImageCreateInfo: vk.ImageCreateInfo,
+		pImage: ^vk.Image) -> vk.Result ---
 
-	// Creates a new `vk.Image`, binds already created memory for it.
-	//
-	// - `allocator` Allocator object.
-	// - `allocation` Allocation that provides memory to be used for binding new
-	//   image to it.
-	// - `allocation_local_offset` Additional offset to be added while binding,
-	//   relative to the beginning of the allocation. Normally it should be 0.
-	// - `image_create_info` Parameters for image creation.
-	// - `image` Output parameter for the created image.
-	//
-	// This procedure automatically:
-	// - Creates image.
-	// - Binds the image with the supplied memory.
-	//
-	// If any of these operations fail, image is not created, returned value is
-	// negative error code and `image` is `nil`.
-	//
-	// If the procedure succeeded, you must destroy the image when you no longer
-	// need it using `vk.DestroyImage()`. If you want to also destroy the
-	// corresponding allocation you can use convenience procedure
-	// `destroy_image()`.
-	@(link_name = "vmaCreateAliasingImage2")
-	create_aliasing_image2 :: proc(
+	// Function similar to `vma.CreateAliasingBuffer2()` but for images.
+	CreateAliasingImage2 :: proc(
 		allocator: Allocator,
 		allocation: Allocation,
-		allocation_local_offset: vk.DeviceSize,
-		#by_ptr image_create_info: vk.ImageCreateInfo,
-		image: ^vk.Image) -> vk.Result ---
+		allocationLocalOffset: vk.DeviceSize,
+		#by_ptr pImageCreateInfo: vk.ImageCreateInfo,
+		pImage: ^vk.Image) -> vk.Result ---
 
 	// Destroys Vulkan image and frees allocated memory.
 	//
-	// This is just a convenience procedure equivalent to:
-	// ```
-	// destroy_image(device, image, allocation_callbacks)
-	// free_memory(allocator, allocation)
-	// ```
+	// This is just a convenience function equivalent to:
 	//
-	// It is safe to pass `nil` as image and/or allocation.
-	@(link_name = "vmaDestroyImage")
-	destroy_image :: proc(
+	//    vk.DestroyImage(device, image, allocationCallbacks)
+	//    vma.FreeMemory(allocator, allocation)
+	//
+	// It is safe to pass nil as image and/or allocation.
+	DestroyImage :: proc(
 		allocator: Allocator,
 		image: vk.Image,
 		allocation: Allocation) ---
 
-	// Creates new virtual block.
+	// Creates new `VirtualBlock` object.
 	//
-	// - `create_info` Parameters for creation.
-	// - `virtual_block` Output parameter for the created virtual block.
-	//
-	// Returns `vk.SUCCESS` if creation was successful, otherwise an error code.
-	@(link_name = "vmaCreateVirtualBlock")
-	create_virtual_block :: proc(
-		#by_ptr create_info: Virtual_Block_Create_Info,
-		virtual_block: ^Virtual_Block) -> vk.Result ---
+	// - `pCreateInfo` Parameters for creation.
+	// - `[out] pVirtualBlock` Returned virtual block object or `nil` if creation failed.
+	CreateVirtualBlock :: proc(
+		#by_ptr pCreateInfo: VirtualBlockCreateInfo,
+		pVirtualBlock: ^VirtualBlock) -> vk.Result ---
 
-	// Destroys virtual block.
+	// Destroys `VirtualBlock` object.
 	//
-	// Please note that you should consciously handle virtual allocations that
-	// could remain unfreed in the block. You should either free them individually
-	// using `virtual_free()` or call `clear_virtual_block()` if you are sure this
-	// is what you want. If you do neither, an assert is called.
+	// Please note that you should consciously handle virtual allocations that could
+	// remain unfreed in the block. You should either free them individually using
+	// `vma.VirtualFree()` or call `vma.ClearVirtualBlock()` if you are sure this is what you
+	// want. If you do neither, an assert is called.
 	//
-	// If you keep pointers to some additional metadata associated with your
-	// virtual allocations in their `user_data`, don't forget to free them.
-	@(link_name = "vmaDestroyVirtualBlock")
-	destroy_virtual_block :: proc(
-		virtual_block: Virtual_Block) ---
+	// If you keep pointers to some additional metadata associated with your virtual
+	// allocations in their `pUserData`, don't forget to free them.
+	DestroyVirtualBlock :: proc(
+		virtualBlock: VirtualBlock) ---
 
-	// Returns true if the virtual block is empty - contains 0 virtual allocations
-	// and has all its space available for new allocations.
-	@(link_name = "vmaIsVirtualBlockEmpty")
-	is_virtual_block_empty :: proc(
-		virtual_block: Virtual_Block) -> b32 ---
+	// Returns true of the `VirtualBlock` is empty - contains 0 virtual allocations and
+	// has all its space available for new allocations.
+	IsVirtualBlockEmpty :: proc(
+		virtualBlock: VirtualBlock) -> b32 ---
 
-	// Returns information about a specific virtual allocation within a virtual
-	// block, like its size and `user_data` pointer.
-	@(link_name = "vmaGetVirtualAllocationInfo")
-	get_virtual_allocation_info :: proc(
-		virtual_block: Virtual_Block,
-		allocation: Virtual_Allocation,
-		allocation_info: ^Virtual_Allocation_Info) ---
+	// Returns information about a specific virtual allocation within a virtual block,
+	// like its size and `pUserData` pointer.
+	GetVirtualAllocationInfo :: proc(
+		virtualBlock: VirtualBlock,
+		allocation: VirtualAllocation,
+		pVirtualAllocInfo: ^VirtualAllocationInfo) ---
 
-	// Allocates new virtual allocation inside given virtual block.
+	// Allocates new virtual allocation inside given `VirtualBlock`.
 	//
-	// - `virtual_block` Virtual block.
-	// - `create_info` Parameters for the allocation.
-	// - `allocation` Output parameter for the new allocation.
-	// - `offset` Output parameter for the offset of the new allocation. Optional,
-	//   can be `nil`.
+	// If the allocation fails due to not enough free space available,
+	// `.ERROR_OUT_OF_DEVICE_MEMORY` is returned (despite the function doesn't ever
+	// allocate actual GPU memory). `pAllocation` is then set to `{}` and `pOffset`, if
+	// not nil, it set to `max(u64)`.
 	//
-	// Returns `vk.SUCCESS` if allocation was successful, otherwise an error code.
-	@(link_name = "vmaVirtualAllocate")
-	virtual_allocate :: proc(
-		virtual_block: Virtual_Block,
-		#by_ptr create_info: Virtual_Allocation_Create_Info,
-		allocation: ^Virtual_Allocation,
-		offset: ^vk.DeviceSize) -> vk.Result ---
+	// - `virtualBlock` Virtual block
+	// - `pCreateInfo` Parameters for the allocation
+	// - `[out] pAllocation` Returned handle of the new allocation
+	// - `[out] pOffset` Returned offset of the new allocation. Optional, can be nil.
+	VirtualAllocate :: proc(
+		virtualBlock: VirtualBlock,
+		#by_ptr pCreateInfo: VirtualAllocationCreateInfo,
+		pAllocation: ^VirtualAllocation,
+		pOffset: ^vk.DeviceSize) -> vk.Result ---
 
-	// Frees virtual allocation inside given virtual block.
+	// Frees virtual allocation inside given `VirtualBlock`.
 	//
-	// It is correct to call this procedure with `allocation == VK_NULL_HANDLE` -
-	// it does nothing.
-	@(link_name = "vmaVirtualFree")
-	virtual_free :: proc(
-		virtual_block: Virtual_Block,
-		allocation: Virtual_Allocation) ---
+	// It is correct to call this function with `allocation == {}` - it does nothing.
+	VirtualFree :: proc(
+		virtualBlock: VirtualBlock,
+		allocation: VirtualAllocation) ---
 
-	// Frees all virtual allocations inside given virtual block.
+	// Frees all virtual allocations inside given `VirtualBlock`.
 	//
-	// You must either call this procedure or free each virtual allocation
-	// individually with `virtual_free()` before destroying a virtual block.
-	// Otherwise, an assert is called.
+	// You must either call this function or free each virtual allocation individually
+	// with `vma.VirtualFree()` before destroying a virtual block. Otherwise, an assert is
+	// called.
 	//
-	// If you keep pointer to some additional metadata associated with your
-	// virtual allocation in its `user_data`, don't forget to free it as well.
-	@(link_name = "vmaClearVirtualBlock")
-	clear_virtual_block :: proc(
-		virtual_block: Virtual_Block) ---
+	// If you keep pointer to some additional metadata associated with your virtual
+	// allocation in its `pUserData`, don't forget to free it as well.
+	ClearVirtualBlock :: proc(
+		virtualBlock: VirtualBlock) ---
 
 	// Changes custom pointer associated with given virtual allocation.
-	@(link_name = "vmaSetVirtualAllocationUserData")
-	set_virtual_allocation_user_data :: proc(
-		virtual_block: Virtual_Block,
-		allocation: Virtual_Allocation,
-		user_data: rawptr) ---
+	SetVirtualAllocationUserData :: proc(
+		virtualBlock: VirtualBlock,
+		allocation: VirtualAllocation,
+		pUserData: rawptr) ---
 
-	// Calculates and returns statistics about virtual allocations and memory
-	// usage in given virtual block.
+	// Calculates and returns statistics about virtual allocations and memory usage in
+	// given `VirtualBlock`.
 	//
-	// This procedure is fast to call. For more detailed statistics, see
-	// `calculate_virtual_block_statistics()`.
-	@(link_name = "vmaGetVirtualBlockStatistics")
-	get_virtual_block_statistics :: proc(
-		virtual_block: Virtual_Block,
-		stats: ^Statistics) ---
+	// This function is fast to call. For more detailed statistics, see
+	// `vma.CalculateVirtualBlockStatistics()`.
+	GetVirtualBlockStatistics :: proc(
+		virtualBlock: VirtualBlock,
+		pStats: ^Statistics) ---
 
-	// Calculates and returns detailed statistics about virtual allocations and
-	// memory usage in given virtual block.
+	// Calculates and returns detailed statistics about virtual allocations and memory
+	// usage in given `VirtualBlock`.
 	//
-	// This procedure is slow to call. Use for debugging purposes. For less
-	// detailed statistics, see `get_virtual_block_statistics()`.
-	@(link_name = "vmaCalculateVirtualBlockStatistics")
-	calculate_virtual_block_statistics :: proc(
-		virtual_block: Virtual_Block,
-		stats: ^Detailed_Statistics) ---
+	// This function is slow to call. Use for debugging purposes. For less detailed
+	// statistics, see `vma.GetVirtualBlockStatistics()`.
+	CalculateVirtualBlockStatistics :: proc(
+		virtualBlock: VirtualBlock,
+		pStats: ^DetailedStatistics) ---
 
-	// Builds and returns a `nil`-terminated string in JSON format with
-	// information about given `Virtual_Block`.
-	// - `virtual_block` Virtual block.
-	// - [out] `stats_string` Returned string.
-	// - `detailed_map` Pass `false` to only obtain statistics as returned by
-	//   `calculate_virtual_block_statistics()`. Pass `true` to also obtain full
-	//   list of allocations and free spaces.
+	// Builds and returns a nil-terminated string in JSON format with information about
+	// given `VirtualBlock`.
 	//
-	// Returned string must be freed using `free_virtual_block_stats_string()`.
-	@(link_name = "vmaBuildVirtualBlockStatsString")
-	build_virtual_block_stats_string :: proc(
-		virtual_block: Virtual_Block,
-		stats_string: ^cstring,
-		detailed_map: b32) ---
+	// - `virtualBlock` Virtual block.
+	// - `[out] ppStatsString` Returned string.
+	// - `detailedMap` Pass `false` to only obtain statistics as returned by
+	//   vmaCalculateVirtualBlockStatistics(). Pass `true` to also obtain full list of
+	//   allocations and free spaces.
+	//
+	// Returned string must be freed using `vma.FreeVirtualBlockStatsString()`.
+	BuildVirtualBlockStatsString :: proc(
+		virtualBlock: VirtualBlock,
+		ppStatsString: ^cstring,
+		detailedMap: b32) ---
 
-	// Frees a string returned by `build_virtual_block_stats_string()`.
-	@(link_name = "vmaFreeVirtualBlockStatsString")
-	free_virtual_block_stats_string :: proc(
-		virtual_block: Virtual_Block,
-		stats_string: cstring) ---
+	// Frees a string returned by `vma.BuildVirtualBlockStatsString()`.
+	FreeVirtualBlockStatsString :: proc(
+		virtualBlock: VirtualBlock,
+		pStatsString: cstring) ---
 
-	// Builds and returns statistics as a `nil`-terminated string in JSON format.
+	// Builds and returns statistics as a nil-terminated string in JSON format.
+	//
 	// - `allocator`
-	// - [out] `stats_string` Must be freed using `free_stats_string()` procedure.
-	// - `detailed_map`
-	@(link_name = "vmaBuildStatsString")
-	build_stats_string :: proc(
+	// - `[out] ppStatsString` Must be freed using vmaFreeStatsString() function.
+	// - `detailedMap`
+	BuildStatsString :: proc(
 		allocator: Allocator,
-		stats_string: ^cstring,
-		detailed_map: b32) ---
+		ppStatsString: ^cstring,
+		detailedMap: b32) ---
 
-	@(link_name = "vmaFreeStatsString")
-	free_stats_string :: proc(
+	FreeStatsString :: proc(
 		allocator: Allocator,
-		stats_string: cstring) ---
+		pStatsString: cstring) ---
 }
-// odinfmt: enable
+
+// Bind Vulkan procedures to VMA.
+create_vulkan_functions :: proc() -> (functions: VulkanFunctions) {
+    functions = {
+        GetInstanceProcAddr                   = vk.GetInstanceProcAddr,
+        GetDeviceProcAddr                     = vk.GetDeviceProcAddr,
+        GetPhysicalDeviceProperties           = vk.GetPhysicalDeviceProperties,
+        GetPhysicalDeviceMemoryProperties     = vk.GetPhysicalDeviceMemoryProperties,
+        AllocateMemory                        = vk.AllocateMemory,
+        FreeMemory                            = vk.FreeMemory,
+        MapMemory                             = vk.MapMemory,
+        UnmapMemory                           = vk.UnmapMemory,
+        FlushMappedMemoryRanges               = vk.FlushMappedMemoryRanges,
+        InvalidateMappedMemoryRanges          = vk.InvalidateMappedMemoryRanges,
+        BindBufferMemory                      = vk.BindBufferMemory,
+        BindImageMemory                       = vk.BindImageMemory,
+        GetBufferMemoryRequirements           = vk.GetBufferMemoryRequirements,
+        GetImageMemoryRequirements            = vk.GetImageMemoryRequirements,
+        CreateBuffer                          = vk.CreateBuffer,
+        DestroyBuffer                         = vk.DestroyBuffer,
+        CreateImage                           = vk.CreateImage,
+        DestroyImage                          = vk.DestroyImage,
+        CmdCopyBuffer                         = vk.CmdCopyBuffer,
+        GetBufferMemoryRequirements2KHR       = vk.GetBufferMemoryRequirements2KHR,
+        GetImageMemoryRequirements2KHR        = vk.GetImageMemoryRequirements2KHR,
+        BindBufferMemory2KHR                  = vk.BindBufferMemory2KHR,
+        BindImageMemory2KHR                   = vk.BindImageMemory2KHR,
+        GetPhysicalDeviceMemoryProperties2KHR = vk.GetPhysicalDeviceMemoryProperties2KHR,
+        GetDeviceBufferMemoryRequirements     = vk.GetDeviceBufferMemoryRequirementsKHR,
+        GetDeviceImageMemoryRequirements      = vk.GetDeviceImageMemoryRequirementsKHR,
+        GetMemoryWin32HandleKHR               = vk.GetMemoryWin32HandleKHR,
+        GetPhysicalDeviceProperties2KHR       = vk.GetPhysicalDeviceProperties2KHR,
+    }
+
+    // Promoted-to-core fallbacks when the KHR alias isn't exported.
+    if functions.GetBufferMemoryRequirements2KHR == nil {
+        functions.GetBufferMemoryRequirements2KHR = vk.GetBufferMemoryRequirements2
+    }
+    if functions.GetImageMemoryRequirements2KHR == nil {
+        functions.GetImageMemoryRequirements2KHR = vk.GetImageMemoryRequirements2
+    }
+    if functions.BindBufferMemory2KHR == nil {
+        functions.BindBufferMemory2KHR = vk.BindBufferMemory2
+    }
+    if functions.BindImageMemory2KHR == nil {
+        functions.BindImageMemory2KHR = vk.BindImageMemory2
+    }
+    if functions.GetPhysicalDeviceMemoryProperties2KHR == nil {
+        functions.GetPhysicalDeviceMemoryProperties2KHR = vk.GetPhysicalDeviceMemoryProperties2
+    }
+    if functions.GetDeviceBufferMemoryRequirements == nil {
+        functions.GetDeviceBufferMemoryRequirements = vk.GetDeviceBufferMemoryRequirements
+    }
+    if functions.GetDeviceImageMemoryRequirements == nil {
+        functions.GetDeviceImageMemoryRequirements = vk.GetDeviceImageMemoryRequirements
+    }
+
+    return
+}
+
+CreateVulkanFunctions :: create_vulkan_functions
+
+// Bind Vulkan procedures to VMA.
+create_device_vulkan_functions :: proc(fp: vk.Device_VTable) -> (functions: VulkanFunctions) {
+    functions = {
+        // Global
+        GetInstanceProcAddr                   = vk.GetInstanceProcAddr,
+        GetDeviceProcAddr                     = vk.GetDeviceProcAddr,
+        GetPhysicalDeviceProperties           = vk.GetPhysicalDeviceProperties,
+        GetPhysicalDeviceMemoryProperties     = vk.GetPhysicalDeviceMemoryProperties,
+        GetPhysicalDeviceMemoryProperties2KHR = vk.GetPhysicalDeviceMemoryProperties2KHR,
+        GetPhysicalDeviceProperties2KHR       = vk.GetPhysicalDeviceProperties2KHR,
+
+        AllocateMemory                        = fp.AllocateMemory,
+        FreeMemory                            = fp.FreeMemory,
+        MapMemory                             = fp.MapMemory,
+        UnmapMemory                           = fp.UnmapMemory,
+        FlushMappedMemoryRanges               = fp.FlushMappedMemoryRanges,
+        InvalidateMappedMemoryRanges          = fp.InvalidateMappedMemoryRanges,
+        BindBufferMemory                      = fp.BindBufferMemory,
+        BindImageMemory                       = fp.BindImageMemory,
+        GetBufferMemoryRequirements           = fp.GetBufferMemoryRequirements,
+        GetImageMemoryRequirements            = fp.GetImageMemoryRequirements,
+        CreateBuffer                          = fp.CreateBuffer,
+        DestroyBuffer                         = fp.DestroyBuffer,
+        CreateImage                           = fp.CreateImage,
+        DestroyImage                          = fp.DestroyImage,
+        CmdCopyBuffer                         = fp.CmdCopyBuffer,
+        GetBufferMemoryRequirements2KHR       = fp.GetBufferMemoryRequirements2KHR,
+        GetImageMemoryRequirements2KHR        = fp.GetImageMemoryRequirements2KHR,
+        BindBufferMemory2KHR                  = fp.BindBufferMemory2KHR,
+        BindImageMemory2KHR                   = fp.BindImageMemory2KHR,
+        GetDeviceBufferMemoryRequirements     = fp.GetDeviceBufferMemoryRequirementsKHR,
+        GetDeviceImageMemoryRequirements      = fp.GetDeviceImageMemoryRequirementsKHR,
+        GetMemoryWin32HandleKHR               = fp.GetMemoryWin32HandleKHR,
+    }
+
+    // Promoted-to-core fallbacks when the KHR alias isn't exported.
+    if functions.GetPhysicalDeviceMemoryProperties2KHR == nil {
+        functions.GetPhysicalDeviceMemoryProperties2KHR = vk.GetPhysicalDeviceMemoryProperties2
+    }
+    if functions.GetPhysicalDeviceProperties2KHR == nil {
+        functions.GetPhysicalDeviceProperties2KHR = vk.GetPhysicalDeviceProperties2
+    }
+    if functions.GetBufferMemoryRequirements2KHR == nil {
+        functions.GetBufferMemoryRequirements2KHR = fp.GetBufferMemoryRequirements2
+    }
+    if functions.GetImageMemoryRequirements2KHR == nil {
+        functions.GetImageMemoryRequirements2KHR = fp.GetImageMemoryRequirements2
+    }
+    if functions.BindBufferMemory2KHR == nil {
+        functions.BindBufferMemory2KHR = fp.BindBufferMemory2
+    }
+    if functions.BindImageMemory2KHR == nil {
+        functions.BindImageMemory2KHR = fp.BindImageMemory2
+    }
+    if functions.GetDeviceBufferMemoryRequirements == nil {
+        functions.GetDeviceBufferMemoryRequirements = fp.GetDeviceBufferMemoryRequirements
+    }
+    if functions.GetDeviceImageMemoryRequirements == nil {
+        functions.GetDeviceImageMemoryRequirements = fp.GetDeviceImageMemoryRequirements
+    }
+
+    return
+}
+
+CreateDeviceVulkanFunctions :: create_device_vulkan_functions
